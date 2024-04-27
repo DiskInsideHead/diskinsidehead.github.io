@@ -82,7 +82,7 @@ $(document).ready(function() {
                                 modelTemplate += `${match[1]}\n`; 
                             }
                         });
-                        output2.textContent = modelTemplate;
+                        output2.value = modelTemplate;
                     }
                 }
             });
