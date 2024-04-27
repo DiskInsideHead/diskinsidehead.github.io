@@ -1,34 +1,34 @@
 $(document).ready(function() {
-    // Обработчики событий перетаскивания
-    const CHUNK_SIZE = 1024 * 1024; // Размер куска 1МБ, к примеру
+    
+    const CHUNK_SIZE = 1024 * 1024; 
     const output = document.getElementById('output');
     const output2 = document.getElementById('output2');
     const clear_button = document.getElementById('clear_button');
-    let dragTimeout; // Временная переменная для таймера
+    let dragTimeout; 
     $(window).on('dragover', function(e) {
         e.preventDefault();
-        clearTimeout(dragTimeout); // Очистим предыдущий таймер, если он был установлен
+        clearTimeout(dragTimeout); 
         $('#dropModal').modal('show');
     });
     $(window).on('dragleave', function(e) {
         e.preventDefault();
-        // Установим задержку перед тем, как закрыть модальное окно
+        
         dragTimeout = setTimeout(function() {
-            $('#dropModal').modal('hide'); // Скрыть модальное окно после задержки
-        }, 100); // Например, задержка в 100 миллисекунд
+            $('#dropModal').modal('hide'); 
+        }, 100); 
     });
     $(window).on('drop', function(e) {
         e.preventDefault();
-        clearTimeout(dragTimeout); // Очистим таймер, предотвращая закрытие модального окна
+        clearTimeout(dragTimeout); 
         $('#dropModal').modal('hide');
         let files = e.originalEvent.dataTransfer.files;
-        handleFiles(files); // Место для функции handleFiles
+        handleFiles(files); 
     });
 
     function handleFiles(files) {
-        Array.from(files).forEach(handleFile); // Для каждого файла вызвать handleFile
+        Array.from(files).forEach(handleFile); 
     }
-    // Логика обработки файлов здесь
+    
     function handleFile(file) {
         var filename = file.name.split('.')[0];
 
@@ -75,11 +75,11 @@ $(document).ready(function() {
                         lines.pop();
                         let modelTemplate = "";
                         lines.forEach((line) => {
-                            // Используем регулярное выражение для поиска подстрок в кавычках
+                            
                             let match = line.match(/"([^"]+)"/);
-                            // Если находим совпадение и оно не содержит "ValveBiped", то добавляем текст без кавычек
+                            
                             if (match && !match[1].includes("ValveBiped")) {
-                                modelTemplate += `${match[1]}\n`; // Используем match[1] для получения текста без кавычек
+                                modelTemplate += `${match[1]}\n`; 
                             }
                         });
                         output2.textContent = modelTemplate;
@@ -92,34 +92,38 @@ $(document).ready(function() {
 
         output.onclick = function() {
             this.select();
-            document.execCommand("copy");
+            // document.execCommand("copy");
+        };
+        output2.onclick = function() {
+            this.select();
+            // document.execCommand("copy");
         };
     }
 });
 
 document.getElementById('clear_button').addEventListener('click', function() {
-    // Получаем элемент <textarea> по его ID
+    
     const output2 = document.getElementById('output2');
     let resultText = output2.value;
     let lines = resultText.split('\n');
     if (lines.length > 1) {
         let modelTemplate = "";
         lines.forEach((line) => {
-            // Используем регулярное выражение для поиска подстрок в кавычках
+            
             let match = line.match(/"([^"]+)"/);
-            // Если находим совпадение и оно не содержит "ValveBiped"
+            
             if (match && !match[1].includes("ValveBiped")) {
-                modelTemplate += `${match[1]}\n`; // Используем match[1] для получения текста без кавычек
+                modelTemplate += `${match[1]}\n`; 
             }
         });
-        // Обновляем свойство value элемента <textarea>
+        
         output2.value = modelTemplate;
     }
 });
 
 
 document.getElementById('submit').addEventListener('click', function(e) {
-    e.preventDefault(); // Предотвращаем стандартное поведение формы при отправке
+    e.preventDefault(); 
     
     const length = document.getElementById('length').value;
     const tip_mass = document.getElementById('tip_mass').value;
@@ -144,7 +148,7 @@ document.getElementById('submit').addEventListener('click', function(e) {
 
     lines.forEach((line) => {
         let trimmedLine = line.trim();
-        if (trimmedLine) { // Проверяем, не пустая ли строка после удаления пробелов
+        if (trimmedLine) { 
             modelTemplate += `$jigglebone "${trimmedLine}"\n{\nis_flexible\n{\n`;
             modelTemplate += `length ${length} tip_mass ${tip_mass} pitch_stiffness ${pitch_stiffness} pitch_damping ${pitch_damping}`;
             modelTemplate += ` yaw_stiffness ${yaw_stiffness} yaw_damping ${yaw_damping} along_stiffness ${along_stiffness}`;
@@ -162,25 +166,25 @@ document.getElementById('submit').addEventListener('click', function(e) {
         }
     });
 
-    // Проверяем, не пустой ли итоговый шаблон
+    
     if (modelTemplate.trim()) {
         output2.value = modelTemplate;
     } else {
-        alert("Пожалуйста, введите по крайней мере одну линию текста."); // Или другое действие по вашему желанию
+        alert("Пожалуйста, введите по крайней мере одну линию текста."); 
     }
 });
 
-// Дождаться загрузки DOM
+
 document.addEventListener('DOMContentLoaded', function() {
-    // Находим элементы на странице
-    const formHeight = document.querySelector('.col-sm form').offsetHeight; // Высота формы во второй колонке
-    const textarea = document.getElementById('output2'); // Текстовое поле в первой колонке
-    const clearButton = document.getElementById('clear_button'); // Кнопка в первой колонке
+    
+    const formHeight = document.querySelector('.col-sm form').offsetHeight; 
+    const textarea = document.getElementById('output2'); 
+    const clearButton = document.getElementById('clear_button'); 
 
-    // Вычисляем и устанавливаем новую высоту для текстового поля и кнопки
-    const buttonHeight = clearButton.offsetHeight; // Высота кнопки
-    const newTextAreaHeight = formHeight; // Вычитаем высоту кнопки и предполагаемого отступа (например, 24px сверху и снизу)
+    
+    const buttonHeight = clearButton.offsetHeight; 
+    const newTextAreaHeight = formHeight; 
 
-    // Применяем новую высоту к текстовому полю
+    
     textarea.style.height = `${newTextAreaHeight}px`;
 });
