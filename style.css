@@ -38,3 +38,29 @@ body {
     font-size: 20px;
     color: #333;
 }
+
+
+@keyframes fall {
+    to { 
+        transform: translateY(calc(100vh + 150px)) rotate(360deg); ; /* Добавим вращение */
+        opacity: 0; 
+    }
+}
+
+@keyframes sideMovement {
+    0%, 100% { margin-left: 0px; }
+    50% { margin-left: 20px; }
+}
+
+.aigis {
+    position: fixed;
+    width: 75px; /* Ширина снежинки */
+    height: 75px; /* Высота снежинки */
+    top: -150px; /* Начало выше области просмотра */
+    will-change: transform, margin-left, opacity;
+    z-index: 9999;
+    animation: fall linear infinite, sideMovement ease-in-out infinite; /* Две бесконечные анимации */
+    animation-duration: var(--fall-duration, 5s), var(--side-duration, 5s); /* Время анимации */
+    pointer-events: none;
+    opacity: 0; /* Начало с нулевой прозрачностью */
+}

@@ -188,3 +188,36 @@ document.addEventListener('DOMContentLoaded', function() {
     
     textarea.style.height = `${newTextAreaHeight}px`;
 });
+
+document.addEventListener('DOMContentLoaded', () => {
+  let clickCount = 0;
+  const magicElement = document.getElementById('drop-area');
+
+  function createSnowflake() {
+    const snowflake = new Image(75, 75);
+    snowflake.src = 'aigis.png';
+    snowflake.classList.add('aigis');
+    snowflake.style.left = `${Math.random() * (window.innerWidth - 75)}px`;
+
+    const fallDuration = `${Math.random() * 5 + 5}s`; // 5 - 10 секунд
+    const sideDuration = `${Math.random() * 5 + 5}s`; // 5 - 10 секунд
+
+    snowflake.style.setProperty('--fall-duration', fallDuration);
+    snowflake.style.setProperty('--side-duration', sideDuration);
+
+    document.body.appendChild(snowflake);
+
+    // Сделаем снежинку видимой после добавления на страницу
+    setTimeout(() => {
+      snowflake.style.opacity = 1;
+    }, 10);
+  }
+
+  // Слушаем клики и создаем снежинки
+  magicElement.addEventListener('click', () => {
+    clickCount++;
+    if (clickCount === 100) {
+      setInterval(createSnowflake, 300);
+    }
+  });
+});
