@@ -1,33 +1,35 @@
 body.dragover {
-   cursor: copy; /* показывает, что файлы можно бросить */
+    cursor: copy;
 }
-
+#copy_bones_button {
+    width: 40px;
+    height: 40px;
+}
+#copy_flex_button {
+    width: 40px;
+    height: 40px;
+}
 #copyButton i {
     color: black;
 }
-
 .highlight {
-  background-color: #f0f0f0;
+    background-color: #f0f0f0;
 }
-
 #drop-area {
-  border: 2px dashed #ccc;
-  padding: 20px;
-  margin-bottom: 20px;
+    border: 2px dashed #ccc;
+    padding: 20px;
+    margin-bottom: 20px;
 }
-
 #drop-area h2 {
-    margin-bottom: 20px; /* Отступ снизу для заголовка */
+    margin-bottom: 20px;
 }
-
-
 #modal {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0,0,0,0.3);
+    background: rgba(0, 0, 0, 0.3);
     display: none;
     justify-content: center;
     align-items: center;
@@ -39,33 +41,33 @@ body.dragover {
     font-size: 20px;
     color: #333;
 }
-
-
 @keyframes fall {
-    to { 
-        transform: translateY(calc(100vh + 150px)) rotate(360deg); ; /* Добавим вращение */
-        opacity: 0; 
+    to {
+        transform: translateY(calc(100vh + 150px)) rotate(360deg);
+        ;
+        opacity: 0;
     }
 }
-
 @keyframes sideMovement {
-    0%, 100% { margin-left: 0px; }
-    50% { margin-left: 20px; }
+    0%, 100% {
+        margin-left: 0px;
+    }
+    50% {
+        margin-left: 20px;
+    }
 }
-
 .aigis {
     position: fixed;
-    width: 75px; /* Ширина снежинки */
-    height: 75px; /* Высота снежинки */
-    top: -150px; /* Начало выше области просмотра */
+    width: 75px;
+    height: 75px;
+    top: -150px;
     will-change: transform, margin-left, opacity;
     z-index: 9999;
-    animation: fall linear infinite, sideMovement ease-in-out infinite; /* Две бесконечные анимации */
-    animation-duration: var(--fall-duration, 5s), var(--side-duration, 5s); /* Время анимации */
+    animation: fall linear infinite, sideMovement ease-in-out infinite;
+    animation-duration: var(--fall-duration, 5s), var(--side-duration, 5s);
     pointer-events: none;
-    opacity: 0; /* Начало с нулевой прозрачностью */
+    opacity: 0;
 }
-
 .custom-file-upload {
     border: 2px dashed #cccccc;
     padding: 20px;
@@ -75,7 +77,6 @@ body.dragover {
     display: block;
     cursor: pointer;
 }
-
 .custom-file-upload:hover {
     border-color: #999999;
 }
