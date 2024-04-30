@@ -7,38 +7,38 @@ $(document).ready(function() {
     $('#copy_bones_button').on('click', function() {
         output2.select();
         document.execCommand("copy");
-        // Optional: Change the button text after copying
+        
         $(this).html('<i class="fi-check"></i> Copied!');
         setTimeout(function() {
-            $('#copy_bones_button').html('<i class="fi-clipboard"></i> Copy');
-        }, 2000); // Reset button text after 2 seconds
-        // Снимаем выделение текста
+            $('#copy_bones_button').html('<i class="fi-clipboard"></i>');
+        }, 2000); 
+        
         if (window.getSelection) {
-            if (window.getSelection().empty) { // Chrome
+            if (window.getSelection().empty) { 
                 window.getSelection().empty();
-            } else if (window.getSelection().removeAllRanges) { // Firefox
+            } else if (window.getSelection().removeAllRanges) { 
                 window.getSelection().removeAllRanges();
             }
-        } else if (document.selection) { // IE
+        } else if (document.selection) { 
             document.selection.empty();
         }
     });
     $('#copy_flex_button').on('click', function() {
         output.select();
         document.execCommand("copy");
-        // Optional: Change the button text after copying
+        
         $(this).html('<i class="fi-check"></i> Copied!');
         setTimeout(function() {
-            $('#copy_flex_button').html('<i class="fi-clipboard"></i> Copy');
-        }, 2000); // Reset button text after 2 seconds
-        // Снимаем выделение текста
+            $('#copy_flex_button').html('<i class="fi-clipboard"></i>');
+        }, 2000); 
+        
         if (window.getSelection) {
-            if (window.getSelection().empty) { // Chrome
+            if (window.getSelection().empty) { 
                 window.getSelection().empty();
-            } else if (window.getSelection().removeAllRanges) { // Firefox
+            } else if (window.getSelection().removeAllRanges) { 
                 window.getSelection().removeAllRanges();
             }
-        } else if (document.selection) { // IE
+        } else if (document.selection) { 
             document.selection.empty();
         }
     });
@@ -145,11 +145,11 @@ $(document).ready(function() {
         processChunk(0);
         output.onclick = function() {
             this.select();
-            // document.execCommand("copy");
+            
         };
         output2.onclick = function() {
             this.select();
-            // document.execCommand("copy");
+            
         };
     }
 });
@@ -228,17 +228,17 @@ document.addEventListener('DOMContentLoaded', () => {
         snowflake.src = 'aigis.png';
         snowflake.classList.add('aigis');
         snowflake.style.left = `${Math.random() * (window.innerWidth - 75)}px`;
-        const fallDuration = `${Math.random() * 5 + 5}s`; // 5 - 10 секунд
-        const sideDuration = `${Math.random() * 5 + 5}s`; // 5 - 10 секунд
+        const fallDuration = `${Math.random() * 5 + 5}s`; 
+        const sideDuration = `${Math.random() * 5 + 5}s`; 
         snowflake.style.setProperty('--fall-duration', fallDuration);
         snowflake.style.setProperty('--side-duration', sideDuration);
         document.body.appendChild(snowflake);
-        // Сделаем снежинку видимой после добавления на страницу
+        
         setTimeout(() => {
             snowflake.style.opacity = 1;
         }, 10);
     }
-    // Слушаем клики и создаем снежинки
+    
     magicElement.addEventListener('click', () => {
         clickCount++;
         if (clickCount === 20) {
