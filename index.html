@@ -23,197 +23,196 @@
                 </div>
             </div>
             <div style="position: relative;">
-                <textarea class="form-control mt-3" id="output" readonly="" rows="6">
+                <textarea class="form-control mb-4 mr-sm-2" id="output" readonly="" rows="6">
                 </textarea>
                 <button class="btn btn-outline-secondary" id="copy_flex_button" style="position: absolute; top: 10px; right: 10px;">
                     <i class="fi-clipboard">
                     </i>
                 </button>
             </div>
-            <br>
-                <div class="row">
-                    <div class="col-sm">
-                        <div id="drop-area">
-                            <h3>
-                                Кости
-                            </h3>
-                        </div>
-                        <div style="position: relative;">
-                            <textarea class="form-control mb-2 mr-sm-2" id="output2" rows="13">
-                            </textarea>
-                            <button class="btn btn-outline-secondary" id="copy_bones_button" style="position: absolute; top: 10px; right: 10px;">
-                                <i class="fi-clipboard">
-                                </i>
-                            </button>
-                        </div>
-                        <div class="d-grid gap-2">
-                            <button class="btn btn-primary btn-lg btn-block mb-2 mr-sm-2" id="clear_button">
-                                Отчистить
-                            </button>
-                        </div>
+
+            <div class="row">
+                <div class="col-sm">
+                    <div id="drop-area">
+                        <h3>
+                            Кости
+                        </h3>
                     </div>
-                    <div class="col-sm">
-                        <div id="drop-area">
-                            <h3>
-                                Настройки Jigglebone
-                            </h3>
+                    <div style="position: relative;">
+                        <textarea class="form-control mb-2 mr-sm-2" id="output2" rows="13">
+                        </textarea>
+                        <button class="btn btn-outline-secondary" id="copy_bones_button" style="position: absolute; top: 10px; right: 10px;">
+                            <i class="fi-clipboard">
+                            </i>
+                        </button>
+                    </div>
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-primary btn-lg btn-block mb-2 mr-sm-2" id="clear_button">
+                            Отчистить
+                        </button>
+                    </div>
+                </div>
+                <div class="col-sm">
+                    <div id="drop-area">
+                        <h3>
+                            Настройки Jigglebone
+                        </h3>
+                    </div>
+                    <form>
+                        <div class="row">
+                            <!-- length -->
+                            <div class="col-sm">
+                                <div class="input-group mb-2 mr-sm-2">
+                                    <div class="input-group-text" style="width: 50%">
+                                        length
+                                    </div>
+                                    <input class="form-control" id="length" max="50" min="1" name="length" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="30">
+                                    </input>
+                                </div>
+                            </div>
+                            <!-- tip_mass -->
+                            <div class="col-sm">
+                                <div class="input-group mb-2 mr-sm-2">
+                                    <div class="input-group-text" style="width: 50%">
+                                        tip_mass
+                                    </div>
+                                    <input class="form-control" id="tip_mass" max="600" min="0" name="tip_mass" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="400">
+                                    </input>
+                                </div>
+                            </div>
+                            <div class="w-100">
+                            </div>
+                            <!-- pitch_stiffness -->
+                            <div class="col-sm">
+                                <div class="input-group mb-2 mr-sm-2">
+                                    <div class="input-group-text" style="width: 50%">
+                                        pitch_stiffness
+                                    </div>
+                                    <input class="form-control" id="pitch_stiffness" max="100" min="0" name="pitch_stiffness" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="50">
+                                    </input>
+                                </div>
+                            </div>
+                            <!-- pitch_damping -->
+                            <div class="col-sm">
+                                <div class="input-group mb-2 mr-sm-2">
+                                    <div class="input-group-text" style="width: 50%">
+                                        pitch_damping
+                                    </div>
+                                    <input class="form-control" id="pitch_damping" max="100" min="0" name="pitch_damping" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="7">
+                                    </input>
+                                </div>
+                            </div>
+                            <div class="w-100">
+                            </div>
+                            <!-- yaw_stiffness -->
+                            <div class="col-sm">
+                                <div class="input-group mb-2 mr-sm-2">
+                                    <div class="input-group-text" style="width: 50%">
+                                        yaw_stiffness
+                                    </div>
+                                    <input class="form-control" id="yaw_stiffness" max="100" min="0" name="yaw_stiffness" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="50">
+                                    </input>
+                                </div>
+                            </div>
+                            <!-- yaw_damping -->
+                            <div class="col-sm">
+                                <div class="input-group mb-2 mr-sm-2">
+                                    <div class="input-group-text" style="width: 50%">
+                                        yaw_damping
+                                    </div>
+                                    <input class="form-control" id="yaw_damping" max="100" min="0" name="yaw_damping" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="50">
+                                    </input>
+                                </div>
+                            </div>
+                            <div class="w-100">
+                            </div>
+                            <!-- along_stiffness -->
+                            <div class="col-sm">
+                                <div class="input-group mb-2 mr-sm-2">
+                                    <div class="input-group-text" style="width: 50%">
+                                        along_stiffness
+                                    </div>
+                                    <input class="form-control" id="along_stiffness" max="500" min="0" name="along_stiffness" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="300">
+                                    </input>
+                                </div>
+                            </div>
+                            <!-- along_damping -->
+                            <div class="col-sm">
+                                <div class="input-group mb-2 mr-sm-2">
+                                    <div class="input-group-text" style="width: 50%">
+                                        along_damping
+                                    </div>
+                                    <input class="form-control" id="along_damping" max="100" min="-100" name="along_damping" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="0">
+                                    </input>
+                                </div>
+                            </div>
+                            <div class="w-100">
+                            </div>
+                            <!-- angle_constraint -->
+                            <div class="col-sm">
+                                <div class="input-group mb-2 mr-sm-2">
+                                    <div class="input-group-text" style="width: 50%">
+                                        angle_constraint
+                                    </div>
+                                    <input class="form-control" id="angle_constraint" max="100" min="0" name="angle_constraint" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="15">
+                                    </input>
+                                </div>
+                            </div>
                         </div>
-                        <form>
-                            <div class="row">
-                                <!-- length -->
-                                <div class="col-sm">
-                                    <div class="input-group mb-2 mr-sm-2">
-                                        <div class="input-group-text" style="width: 50%">
-                                            length
-                                        </div>
-                                        <input class="form-control" id="length" max="50" min="1" name="length" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="30">
-                                        </input>
-                                    </div>
+                        <!-- length 30 tip_mass 400 pitch_stiffness 50 pitch_damping 7 yaw_stiffness 50 yaw_damping 7 along_stiffness 300 along_damping 0 angle_constraint 15 pitch_constraint -10 15 -->
+                        <!-- pitch_constraint -->
+                        <div class="input-group mb-2 mr-sm-2">
+                            <div class="input-group-text" style="width: 50%">
+                                <div class="form-check form-switch">
+                                    <input checked="" class="form-check-input" id="pitch_constraint_s" role="switch" type="checkbox"/>
+                                    <label class="custom-control-label" for="pitch_constraint_s">
+                                    </label>
                                 </div>
-                                <!-- tip_mass -->
-                                <div class="col-sm">
-                                    <div class="input-group mb-2 mr-sm-2">
-                                        <div class="input-group-text" style="width: 50%">
-                                            tip_mass
-                                        </div>
-                                        <input class="form-control" id="tip_mass" max="600" min="0" name="tip_mass" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="400">
-                                        </input>
-                                    </div>
-                                </div>
-                                <div class="w-100">
-                                </div>
-                                <!-- pitch_stiffness -->
-                                <div class="col-sm">
-                                    <div class="input-group mb-2 mr-sm-2">
-                                        <div class="input-group-text" style="width: 50%">
-                                            pitch_stiffness
-                                        </div>
-                                        <input class="form-control" id="pitch_stiffness" max="100" min="0" name="pitch_stiffness" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="50">
-                                        </input>
-                                    </div>
-                                </div>
-                                <!-- pitch_damping -->
-                                <div class="col-sm">
-                                    <div class="input-group mb-2 mr-sm-2">
-                                        <div class="input-group-text" style="width: 50%">
-                                            pitch_damping
-                                        </div>
-                                        <input class="form-control" id="pitch_damping" max="100" min="0" name="pitch_damping" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="7">
-                                        </input>
-                                    </div>
-                                </div>
-                                <div class="w-100">
-                                </div>
-                                <!-- yaw_stiffness -->
-                                <div class="col-sm">
-                                    <div class="input-group mb-2 mr-sm-2">
-                                        <div class="input-group-text" style="width: 50%">
-                                            yaw_stiffness
-                                        </div>
-                                        <input class="form-control" id="yaw_stiffness" max="100" min="0" name="yaw_stiffness" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="50">
-                                        </input>
-                                    </div>
-                                </div>
-                                <!-- yaw_damping -->
-                                <div class="col-sm">
-                                    <div class="input-group mb-2 mr-sm-2">
-                                        <div class="input-group-text" style="width: 50%">
-                                            yaw_damping
-                                        </div>
-                                        <input class="form-control" id="yaw_damping" max="100" min="0" name="yaw_damping" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="50">
-                                        </input>
-                                    </div>
-                                </div>
-                                <div class="w-100">
-                                </div>
-                                <!-- along_stiffness -->
-                                <div class="col-sm">
-                                    <div class="input-group mb-2 mr-sm-2">
-                                        <div class="input-group-text" style="width: 50%">
-                                            along_stiffness
-                                        </div>
-                                        <input class="form-control" id="along_stiffness" max="500" min="0" name="along_stiffness" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="300">
-                                        </input>
-                                    </div>
-                                </div>
-                                <!-- along_damping -->
-                                <div class="col-sm">
-                                    <div class="input-group mb-2 mr-sm-2">
-                                        <div class="input-group-text" style="width: 50%">
-                                            along_damping
-                                        </div>
-                                        <input class="form-control" id="along_damping" max="100" min="-100" name="along_damping" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="0">
-                                        </input>
-                                    </div>
-                                </div>
-                                <div class="w-100">
-                                </div>
-                                <!-- angle_constraint -->
-                                <div class="col-sm">
-                                    <div class="input-group mb-2 mr-sm-2">
-                                        <div class="input-group-text" style="width: 50%">
-                                            angle_constraint
-                                        </div>
-                                        <input class="form-control" id="angle_constraint" max="100" min="0" name="angle_constraint" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="15">
-                                        </input>
-                                    </div>
-                                </div>
+                                pitch_constraint
                             </div>
-                            <!-- length 30 tip_mass 400 pitch_stiffness 50 pitch_damping 7 yaw_stiffness 50 yaw_damping 7 along_stiffness 300 along_damping 0 angle_constraint 15 pitch_constraint -10 15 -->
-                            <!-- pitch_constraint -->
-                            <div class="input-group mb-2 mr-sm-2">
-                                <div class="input-group-text" style="width: 50%">
-                                    <div class="form-check form-switch">
-                                        <input checked="" class="form-check-input" id="pitch_constraint_s" role="switch" type="checkbox"/>
-                                        <label class="custom-control-label" for="pitch_constraint_s">
-                                        </label>
-                                    </div>
-                                    pitch_constraint
-                                </div>
-                                <input class="form-control" id="pitch_constraint_min" max="100" min="-100" name="pitch_constraint_min" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="-1">
-                                    <input class="form-control" id="pitch_constraint_max" max="100" min="-100" name="pitch_constraint_max" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="15">
-                                    </input>
+                            <input class="form-control" id="pitch_constraint_min" max="100" min="-100" name="pitch_constraint_min" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="-1">
+                                <input class="form-control" id="pitch_constraint_max" max="100" min="-100" name="pitch_constraint_max" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="15">
                                 </input>
-                            </div>
-                            <!-- yaw_constraint -->
-                            <div class="input-group mb-2 mr-sm-2">
-                                <div class="input-group-text" style="width: 50%">
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" id="yaw_constraint_s" role="switch" type="checkbox"/>
-                                        <label class="custom-control-label" for="yaw_constraint_s">
-                                        </label>
-                                    </div>
-                                    yaw_constraint
+                            </input>
+                        </div>
+                        <!-- yaw_constraint -->
+                        <div class="input-group mb-2 mr-sm-2">
+                            <div class="input-group-text" style="width: 50%">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" id="yaw_constraint_s" role="switch" type="checkbox"/>
+                                    <label class="custom-control-label" for="yaw_constraint_s">
+                                    </label>
                                 </div>
-                                <input class="form-control" id="yaw_constraint_min" max="100" min="-100" name="yaw_constraint_min" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="-15">
-                                    <input class="form-control" id="yaw_constraint_max" max="100" min="-100" name="yaw_constraint_max" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="15">
-                                    </input>
-                                </input>
+                                yaw_constraint
                             </div>
-                        </form>
-                        <!-- Button -->
-                        <div class="d-grid gap-2">
-                            <button class="btn btn-primary btn-lg btn-block mb-2 mr-sm-2" id="submit">
-                                Заполнить
-                            </button>
+                            <input class="form-control" id="yaw_constraint_min" max="100" min="-100" name="yaw_constraint_min" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="-15">
+                                <input class="form-control" id="yaw_constraint_max" max="100" min="-100" name="yaw_constraint_max" placeholder="Ало ну напиши ченить" style="flex: 1;" type="number" value="15">
+                                </input>
+                            </input>
+                        </div>
+                    </form>
+                    <!-- Button -->
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-primary btn-lg btn-block mb-2 mr-sm-2" id="submit">
+                            Заполнить
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div aria-hidden="true" aria-labelledby="modalLabel" class="modal" id="dropModal" role="dialog" tabindex="-1">
+                <div class="modal-dialog" role="document">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="modalLabel">
+                                Готовы загрузить файл
+                            </h5>
+                        </div>
+                        <div class="modal-body">
+                            Отпустите файл для начала загрузки.
                         </div>
                     </div>
                 </div>
-                <div aria-hidden="true" aria-labelledby="modalLabel" class="modal" id="dropModal" role="dialog" tabindex="-1">
-                    <div class="modal-dialog" role="document">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title" id="modalLabel">
-                                    Готовы загрузить файл
-                                </h5>
-                            </div>
-                            <div class="modal-body">
-                                Отпустите файл для начала загрузки.
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </br>
+            </div>
         </div>
         <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js">
         </script>
