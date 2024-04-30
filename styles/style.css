@@ -1,14 +1,6 @@
 body.dragover {
     cursor: copy;
 }
-#copy_bones_button {
-    width: 40px;
-    height: 40px;
-}
-#copy_flex_button {
-    width: 40px;
-    height: 40px;
-}
 #copyButton i {
     color: black;
 }
@@ -79,4 +71,12 @@ body.dragover {
 }
 .custom-file-upload:hover {
     border-color: #999999;
+}
+#copy_bones_button {
+    width: 40px;
+    height: 40px;
+}
+#copy_flex_button {
+    width: 40px;
+    height: 40px;
 }
