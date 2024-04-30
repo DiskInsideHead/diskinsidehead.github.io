@@ -2,13 +2,9 @@ body.dragover {
    cursor: copy; /* показывает, что файлы можно бросить */
 }
 
-body {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
+#copyButton i {
+    color: black;
 }
-
 
 .highlight {
   background-color: #f0f0f0;
@@ -19,6 +15,11 @@ body {
   padding: 20px;
   margin-bottom: 20px;
 }
+
+#drop-area h2 {
+    margin-bottom: 20px; /* Отступ снизу для заголовка */
+}
+
 
 #modal {
     position: fixed;
@@ -63,4 +64,18 @@ body {
     animation-duration: var(--fall-duration, 5s), var(--side-duration, 5s); /* Время анимации */
     pointer-events: none;
     opacity: 0; /* Начало с нулевой прозрачностью */
+}
+
+.custom-file-upload {
+    border: 2px dashed #cccccc;
+    padding: 20px;
+    text-align: center;
+    font-size: 16px;
+    color: #333333;
+    display: block;
+    cursor: pointer;
+}
+
+.custom-file-upload:hover {
+    border-color: #999999;
 }

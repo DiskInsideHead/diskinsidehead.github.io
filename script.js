@@ -1,34 +1,90 @@
 $(document).ready(function() {
-    
-    const CHUNK_SIZE = 1024 * 1024; 
+    const CHUNK_SIZE = 1024 * 1024;
     const output = document.getElementById('output');
     const output2 = document.getElementById('output2');
     const clear_button = document.getElementById('clear_button');
-    let dragTimeout; 
+    let dragTimeout;
+    $('#copy_bones_button').on('click', function() {
+        output2.select();
+        document.execCommand("copy");
+        // Optional: Change the button text after copying
+        $(this).html('<i class="fi-check"></i> Copied!');
+        setTimeout(function() {
+            $('#copy_bones_button').html('<i class="fi-clipboard"></i> Copy');
+        }, 2000); // Reset button text after 2 seconds
+        // Снимаем выделение текста
+        if (window.getSelection) {
+            if (window.getSelection().empty) { // Chrome
+                window.getSelection().empty();
+            } else if (window.getSelection().removeAllRanges) { // Firefox
+                window.getSelection().removeAllRanges();
+            }
+        } else if (document.selection) { // IE
+            document.selection.empty();
+        }
+    });
+    $('#copy_flex_button').on('click', function() {
+        output.select();
+        document.execCommand("copy");
+        // Optional: Change the button text after copying
+        $(this).html('<i class="fi-check"></i> Copied!');
+        setTimeout(function() {
+            $('#copy_flex_button').html('<i class="fi-clipboard"></i> Copy');
+        }, 2000); // Reset button text after 2 seconds
+        // Снимаем выделение текста
+        if (window.getSelection) {
+            if (window.getSelection().empty) { // Chrome
+                window.getSelection().empty();
+            } else if (window.getSelection().removeAllRanges) { // Firefox
+                window.getSelection().removeAllRanges();
+            }
+        } else if (document.selection) { // IE
+            document.selection.empty();
+        }
+    });
+
+    $('#formFileLg').on('change', function(e) {
+        const files = e.target.files;
+        if (files.length === 1) {
+            const file = files[0];
+            if (file.name.toLowerCase().endsWith('.vta')) {
+                handleFile(file);
+            } else {
+                alert('Please select a VTA file.');
+            }
+        } else {
+            alert('Please select only one file.');
+        }
+    });
     $(window).on('dragover', function(e) {
         e.preventDefault();
-        clearTimeout(dragTimeout); 
+        clearTimeout(dragTimeout);
         $('#dropModal').modal('show');
     });
     $(window).on('dragleave', function(e) {
         e.preventDefault();
-        
         dragTimeout = setTimeout(function() {
-            $('#dropModal').modal('hide'); 
-        }, 100); 
+            $('#dropModal').modal('hide');
+        }, 100);
     });
     $(window).on('drop', function(e) {
         e.preventDefault();
-        clearTimeout(dragTimeout); 
+        clearTimeout(dragTimeout);
         $('#dropModal').modal('hide');
         let files = e.originalEvent.dataTransfer.files;
-        handleFiles(files); 
+        handleFiles(files);
     });
 
     function handleFiles(files) {
-        Array.from(files).forEach(handleFile); 
+        Array.from(files).forEach(file => {
+            if (file.name.toLowerCase().endsWith('.vta')) {
+                handleFile(file);
+            } else {
+                alert('Please select a VTA file.');
+            }
+        });
     }
-    
+
     function handleFile(file) {
         var filename = file.name.split('.')[0];
 
@@ -75,11 +131,9 @@ $(document).ready(function() {
                         lines.pop();
                         let modelTemplate = "";
                         lines.forEach((line) => {
-                            
                             let match = line.match(/"([^"]+)"/);
-                            
                             if (match && !match[1].includes("ValveBiped")) {
-                                modelTemplate += `${match[1]}\n`; 
+                                modelTemplate += `${match[1]}\n`;
                             }
                         });
                         output2.value = modelTemplate;
@@ -89,7 +143,6 @@ $(document).ready(function() {
             reader.readAsText(slice, "UTF-8");
         }
         processChunk(0);
-
         output.onclick = function() {
             this.select();
             // document.execCommand("copy");
@@ -100,31 +153,23 @@ $(document).ready(function() {
         };
     }
 });
-
 document.getElementById('clear_button').addEventListener('click', function() {
-    
     const output2 = document.getElementById('output2');
     let resultText = output2.value;
     let lines = resultText.split('\n');
     if (lines.length > 1) {
         let modelTemplate = "";
         lines.forEach((line) => {
-            
             let match = line.match(/"([^"]+)"/);
-            
             if (match && !match[1].includes("ValveBiped")) {
-                modelTemplate += `${match[1]}\n`; 
+                modelTemplate += `${match[1]}\n`;
             }
         });
-        
         output2.value = modelTemplate;
     }
 });
-
-
 document.getElementById('submit').addEventListener('click', function(e) {
-    e.preventDefault(); 
-    
+    e.preventDefault();
     const length = document.getElementById('length').value;
     const tip_mass = document.getElementById('tip_mass').value;
     const pitch_stiffness = document.getElementById('pitch_stiffness').value;
@@ -140,84 +185,64 @@ document.getElementById('submit').addEventListener('click', function(e) {
     const yaw_constraint_s = document.getElementById('yaw_constraint_s').checked;
     const yaw_constraint_min = document.getElementById('yaw_constraint_min').value;
     const yaw_constraint_max = document.getElementById('yaw_constraint_max').value;
-
     const output2 = document.getElementById('output2');
     let resultText = output2.value;
     let lines = resultText.split('\n');
     let modelTemplate = "";
-
     lines.forEach((line) => {
         let trimmedLine = line.trim();
-        if (trimmedLine) { 
+        if (trimmedLine) {
             modelTemplate += `$jigglebone "${trimmedLine}"\n{\nis_flexible\n{\n`;
             modelTemplate += `length ${length} tip_mass ${tip_mass} pitch_stiffness ${pitch_stiffness} pitch_damping ${pitch_damping}`;
             modelTemplate += ` yaw_stiffness ${yaw_stiffness} yaw_damping ${yaw_damping} along_stiffness ${along_stiffness}`;
             modelTemplate += ` along_damping ${along_damping} angle_constraint ${angle_constraint}\n`;
-
             if (pitch_constraint_s) {
                 modelTemplate += `pitch_constraint ${pitch_constraint_min} ${pitch_constraint_max}\n`;
             }
-
             if (yaw_constraint_s) {
                 modelTemplate += `yaw_constraint ${yaw_constraint_min} ${yaw_constraint_max}\n`;
             }
-
             modelTemplate += "}\n}\n";
         }
     });
-
-    
     if (modelTemplate.trim()) {
         output2.value = modelTemplate;
     } else {
-        alert("Пожалуйста, введите по крайней мере одну линию текста."); 
+        alert("Пожалуйста, введите по крайней мере одну линию текста.");
     }
 });
-
-
 document.addEventListener('DOMContentLoaded', function() {
-    
-    const formHeight = document.querySelector('.col-sm form').offsetHeight; 
-    const textarea = document.getElementById('output2'); 
-    const clearButton = document.getElementById('clear_button'); 
-
-    
-    const buttonHeight = clearButton.offsetHeight; 
-    const newTextAreaHeight = formHeight; 
-
-    
+    const formHeight = document.querySelector('.col-sm form').offsetHeight;
+    const textarea = document.getElementById('output2');
+    const clearButton = document.getElementById('clear_button');
+    const buttonHeight = clearButton.offsetHeight;
+    const newTextAreaHeight = formHeight;
     textarea.style.height = `${newTextAreaHeight}px`;
 });
-
 document.addEventListener('DOMContentLoaded', () => {
-  let clickCount = 0;
-  const magicElement = document.getElementById('drop-area');
+    let clickCount = 0;
+    const magicElement = document.getElementById('drop-area');
 
-  function createSnowflake() {
-    const snowflake = new Image(75, 75);
-    snowflake.src = 'aigis.png';
-    snowflake.classList.add('aigis');
-    snowflake.style.left = `${Math.random() * (window.innerWidth - 75)}px`;
-
-    const fallDuration = `${Math.random() * 5 + 5}s`; // 5 - 10 секунд
-    const sideDuration = `${Math.random() * 5 + 5}s`; // 5 - 10 секунд
-
-    snowflake.style.setProperty('--fall-duration', fallDuration);
-    snowflake.style.setProperty('--side-duration', sideDuration);
-
-    document.body.appendChild(snowflake);
-
-    // Сделаем снежинку видимой после добавления на страницу
-    setTimeout(() => {
-      snowflake.style.opacity = 1;
-    }, 10);
-  }
-
-  // Слушаем клики и создаем снежинки
-  magicElement.addEventListener('click', () => {
-    clickCount++;
-    if (clickCount === 100) {
-      setInterval(createSnowflake, 300);
+    function createSnowflake() {
+        const snowflake = new Image(75, 75);
+        snowflake.src = 'aigis.png';
+        snowflake.classList.add('aigis');
+        snowflake.style.left = `${Math.random() * (window.innerWidth - 75)}px`;
+        const fallDuration = `${Math.random() * 5 + 5}s`; // 5 - 10 секунд
+        const sideDuration = `${Math.random() * 5 + 5}s`; // 5 - 10 секунд
+        snowflake.style.setProperty('--fall-duration', fallDuration);
+        snowflake.style.setProperty('--side-duration', sideDuration);
+        document.body.appendChild(snowflake);
+        // Сделаем снежинку видимой после добавления на страницу
+        setTimeout(() => {
+            snowflake.style.opacity = 1;
+        }, 10);
     }
-  });
+    // Слушаем клики и создаем снежинки
+    magicElement.addEventListener('click', () => {
+        clickCount++;
+        if (clickCount === 20) {
+            setInterval(createSnowflake, 300);
+        }
+    });
 });
