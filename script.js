@@ -8,7 +8,7 @@ $(document).ready(function() {
         output2.select();
         document.execCommand("copy");
         
-        $(this).html('<i class="fi-check"></i> Copied!');
+        $(this).html('<i class="fi-check"></i>');
         setTimeout(function() {
             $('#copy_bones_button').html('<i class="fi-clipboard"></i>');
         }, 2000); 
@@ -27,7 +27,7 @@ $(document).ready(function() {
         output.select();
         document.execCommand("copy");
         
-        $(this).html('<i class="fi-check"></i> Copied!');
+        $(this).html('<i class="fi-check"></i>');
         setTimeout(function() {
             $('#copy_flex_button').html('<i class="fi-clipboard"></i>');
         }, 2000); 
