@@ -7,42 +7,37 @@ $(document).ready(function() {
     $('#copy_bones_button').on('click', function() {
         output2.select();
         document.execCommand("copy");
-        
         $(this).html('<i class="fi-check"></i>');
         setTimeout(function() {
             $('#copy_bones_button').html('<i class="fi-clipboard"></i>');
-        }, 2000); 
-        
+        }, 2000);
         if (window.getSelection) {
-            if (window.getSelection().empty) { 
+            if (window.getSelection().empty) {
                 window.getSelection().empty();
-            } else if (window.getSelection().removeAllRanges) { 
+            } else if (window.getSelection().removeAllRanges) {
                 window.getSelection().removeAllRanges();
             }
-        } else if (document.selection) { 
+        } else if (document.selection) {
             document.selection.empty();
         }
     });
     $('#copy_flex_button').on('click', function() {
         output.select();
         document.execCommand("copy");
-        
         $(this).html('<i class="fi-check"></i>');
         setTimeout(function() {
             $('#copy_flex_button').html('<i class="fi-clipboard"></i>');
-        }, 2000); 
-        
+        }, 2000);
         if (window.getSelection) {
-            if (window.getSelection().empty) { 
+            if (window.getSelection().empty) {
                 window.getSelection().empty();
-            } else if (window.getSelection().removeAllRanges) { 
+            } else if (window.getSelection().removeAllRanges) {
                 window.getSelection().removeAllRanges();
             }
-        } else if (document.selection) { 
+        } else if (document.selection) {
             document.selection.empty();
         }
     });
-
     $('#formFileLg').on('change', function(e) {
         const files = e.target.files;
         if (files.length === 1) {
@@ -145,11 +140,9 @@ $(document).ready(function() {
         processChunk(0);
         output.onclick = function() {
             this.select();
-            
         };
         output2.onclick = function() {
             this.select();
-            
         };
     }
 });
@@ -222,27 +215,71 @@ document.addEventListener('DOMContentLoaded', function() {
 document.addEventListener('DOMContentLoaded', () => {
     let clickCount = 0;
     const magicElement = document.getElementById('drop-area');
+    const snowflakes = [];
+    let snowflakeIndex = 0;
+    const initialTop = -75;
 
     function createSnowflake() {
         const snowflake = new Image(75, 75);
         snowflake.src = 'aigis.png';
         snowflake.classList.add('aigis');
-        snowflake.style.left = `${Math.random() * (window.innerWidth - 75)}px`;
-        const fallDuration = `${Math.random() * 5 + 5}s`; 
-        const sideDuration = `${Math.random() * 5 + 5}s`; 
+        let left;
+        let isOverlap;
+        do {
+            left = Math.random() * (window.innerWidth - 75);
+            isOverlap = snowflakes.some(flake => Math.abs(left - parseFloat(flake.style.left)) < 75);
+        } while (isOverlap);
+        snowflake.style.left = `${left}px`;
+        snowflake.style.top = `${initialTop}px`;
+        const fallDuration = `${Math.random() * 5 + 5}s`;
+        const sideDuration = `${Math.random() * 5 + 5}s`;
         snowflake.style.setProperty('--fall-duration', fallDuration);
         snowflake.style.setProperty('--side-duration', sideDuration);
         document.body.appendChild(snowflake);
-        
+        snowflakes.push(snowflake);
+        snowflake.addEventListener('animationend', () => {
+            removeSnowflake(snowflake);
+        });
         setTimeout(() => {
             snowflake.style.opacity = 1;
         }, 10);
     }
-    
+
+    function removeSnowflake(snowflake) {
+        snowflake.style.opacity = 0;
+        snowflake.addEventListener('transitionend', () => {
+            document.body.removeChild(snowflake);
+            snowflakes.splice(snowflakes.indexOf(snowflake), 1);
+        });
+    }
+
+    function render() {
+        snowflakes.forEach((snowflake) => {
+            const currentTop = parseFloat(snowflake.style.top);
+            const newTop = currentTop + 1;
+            snowflake.style.top = `${newTop}px`;
+            if (currentTop >= window.innerHeight) {
+                removeSnowflake(snowflake);
+            }
+        });
+        requestAnimationFrame(render);
+    }
+
+    function createDelayedSnowflakes(count) {
+        const interval = setInterval(() => {
+            if (snowflakeIndex < count) {
+                createSnowflake();
+                snowflakeIndex++;
+            } else {
+                clearInterval(interval);
+                render();
+            }
+        }, 600);
+    }
     magicElement.addEventListener('click', () => {
         clickCount++;
         if (clickCount === 20) {
-            setInterval(createSnowflake, 300);
+            createDelayedSnowflakes(50);
         }
     });
 });
