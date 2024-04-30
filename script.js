@@ -215,71 +215,35 @@ document.addEventListener('DOMContentLoaded', function() {
 document.addEventListener('DOMContentLoaded', () => {
     let clickCount = 0;
     const magicElement = document.getElementById('drop-area');
-    const snowflakes = [];
-    let snowflakeIndex = 0;
-    const initialTop = -75;
+    const maxSnowflakes = 78;
+    let snowflakes = [];
 
     function createSnowflake() {
+        if (snowflakes.length > maxSnowflakes) {
+            return;
+        }
         const snowflake = new Image(75, 75);
         snowflake.src = 'aigis.png';
         snowflake.classList.add('aigis');
-        let left;
-        let isOverlap;
-        do {
-            left = Math.random() * (window.innerWidth - 75);
-            isOverlap = snowflakes.some(flake => Math.abs(left - parseFloat(flake.style.left)) < 75);
-        } while (isOverlap);
-        snowflake.style.left = `${left}px`;
-        snowflake.style.top = `${initialTop}px`;
+        snowflake.style.left = `${Math.random() * (window.innerWidth - 75)}px`;
         const fallDuration = `${Math.random() * 5 + 5}s`;
         const sideDuration = `${Math.random() * 5 + 5}s`;
         snowflake.style.setProperty('--fall-duration', fallDuration);
         snowflake.style.setProperty('--side-duration', sideDuration);
         document.body.appendChild(snowflake);
         snowflakes.push(snowflake);
-        snowflake.addEventListener('animationend', () => {
-            removeSnowflake(snowflake);
-        });
         setTimeout(() => {
             snowflake.style.opacity = 1;
         }, 10);
-    }
-
-    function removeSnowflake(snowflake) {
-        snowflake.style.opacity = 0;
-        snowflake.addEventListener('transitionend', () => {
-            document.body.removeChild(snowflake);
-            snowflakes.splice(snowflakes.indexOf(snowflake), 1);
+        snowflake.addEventListener('animationend', () => {
+            snowflake.parentElement.removeChild(snowflake);
+            snowflakes = snowflakes.filter(flake => flake !== snowflake);
         });
-    }
-
-    function render() {
-        snowflakes.forEach((snowflake) => {
-            const currentTop = parseFloat(snowflake.style.top);
-            const newTop = currentTop + 1;
-            snowflake.style.top = `${newTop}px`;
-            if (currentTop >= window.innerHeight) {
-                removeSnowflake(snowflake);
-            }
-        });
-        requestAnimationFrame(render);
-    }
-
-    function createDelayedSnowflakes(count) {
-        const interval = setInterval(() => {
-            if (snowflakeIndex < count) {
-                createSnowflake();
-                snowflakeIndex++;
-            } else {
-                clearInterval(interval);
-                render();
-            }
-        }, 600);
     }
     magicElement.addEventListener('click', () => {
         clickCount++;
         if (clickCount === 20) {
-            createDelayedSnowflakes(50);
+            setInterval(createSnowflake, 600);
         }
     });
 });
