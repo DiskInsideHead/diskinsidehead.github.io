@@ -79,3 +79,25 @@ body.dragover {
 .custom-file-upload:hover {
     border-color: #999999;
 }
+.blue-theme {
+    transition: background-color 5s, color 5s;
+    background-color: #11C2FD;
+    color: #02052A;
+}
+@keyframes fadeIn {
+    0% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+.blue-theme-body {
+    background: linear-gradient(0deg, #0303A9, #1338B4, #3171D2, #51AEF8);
+    background-size: 110% 110%;
+    animation: fadeIn 8s ease forwards;
+}
+.blue-theme-text {
+    transition: color 1s;
+    color: #FFFFFF;
+}

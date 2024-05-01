@@ -12,6 +12,11 @@
         </link>
     </head>
     <body>
+        <div id="volume-control-container" class="d-flex justify-content-center d-none" style="position: fixed; top: 10px; left: 0; right: 0; z-index: 1000;">
+            <input class="form-range" id="volume-control" max="0.3" min="0" step="0.001" style="width: 400px;" type="range" value="0.1"/>
+        </div>
+        <audio id="background-music" loop="loop" src="https://cdn.discordapp.com/attachments/1208351626352525443/1235017572706025493/aria_of_the_soul.mp3?ex=6632d73e&is=663185be&hm=19e16c80abfa1ecb90a93cb7845374e0197ee77ef52b56b711ad4b414cf5f31d&">
+        </audio>
         <div class="container text-center py-5">
             <div id="drop-area">
                 <div>
@@ -25,7 +30,7 @@
             <div style="position: relative;">
                 <textarea class="form-control mb-4 mr-sm-2" id="output" readonly="" rows="6">
                 </textarea>
-                <button class="btn btn-outline-secondary" id="copy_flex_button" style="position: absolute; top: 10px; right: 10px;">
+                <button class="btn btn-outline-primary" id="copy_flex_button" style="position: absolute; top: 10px; right: 10px;">
                     <i class="fi-clipboard">
                     </i>
                 </button>
@@ -40,7 +45,7 @@
                     <div style="position: relative;">
                         <textarea class="form-control mb-2 mr-sm-2" id="output2" rows="13">
                         </textarea>
-                        <button class="btn btn-outline-secondary" id="copy_bones_button" style="position: absolute; top: 10px; right: 10px;">
+                        <button class="btn btn-outline-primary" id="copy_bones_button" style="position: absolute; top: 10px; right: 10px;">
                             <i class="fi-clipboard">
                             </i>
                         </button>

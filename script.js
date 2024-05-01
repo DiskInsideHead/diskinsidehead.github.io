@@ -217,6 +217,38 @@ document.addEventListener('DOMContentLoaded', () => {
     const magicElement = document.getElementById('drop-area');
     const maxSnowflakes = 78;
     let snowflakes = [];
+    const volumeControl = document.getElementById('volume-control');
+    const backgroundMusic = document.getElementById('background-music');
+    // Устанавливаем начальное значение громкости музыки
+    backgroundMusic.volume = volumeControl.value;
+    volumeControl.addEventListener('input', function() {
+        backgroundMusic.volume = this.value;
+    });
+
+
+    function applyBlueTheme() {
+
+        const volumeContainer = document.getElementById('volume-control-container');
+        volumeContainer.classList.remove('d-none');
+
+        document.body.classList.add('blue-theme-body');
+
+        document.querySelectorAll('h1, h2, h3').forEach(element => {
+            element.classList.add('blue-theme-text');
+        });
+        let music = document.getElementById('background-music');
+        music.volume = 0.1; // Установим громкость на 20%
+        music.play();
+    }
+    // Функция для сброса темы страницы (если понадобится)
+    function resetTheme() {
+        document.body.classList.remove('blue-theme-body');
+
+        // Останавливаем воспроизведение музыки
+        let music = document.getElementById('background-music');
+        music.pause();
+        music.currentTime = 0; // Сброс к началу
+    }
 
     function createSnowflake() {
         if (snowflakes.length > maxSnowflakes) {
@@ -243,6 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
     magicElement.addEventListener('click', () => {
         clickCount++;
         if (clickCount === 20) {
+            applyBlueTheme();
             setInterval(createSnowflake, 600);
         }
     });
