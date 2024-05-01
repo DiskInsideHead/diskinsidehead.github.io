@@ -57,8 +57,6 @@ body.dragover {
 }
 .aigis {
     position: fixed;
-    width: 75px;
-    height: 75px;
     top: -150px;
     will-change: transform, margin-left, opacity;
     z-index: 9999;

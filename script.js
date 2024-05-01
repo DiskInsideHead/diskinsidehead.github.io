@@ -217,45 +217,42 @@ document.addEventListener('DOMContentLoaded', () => {
     const magicElement = document.getElementById('drop-area');
     const maxSnowflakes = 78;
     let snowflakes = [];
+    const imageSources = ['aigis.png', 'toast.png']; // Массив с путями к изображениям
+
+
     const volumeControl = document.getElementById('volume-control');
     const backgroundMusic = document.getElementById('background-music');
-    // Устанавливаем начальное значение громкости музыки
     backgroundMusic.volume = volumeControl.value;
     volumeControl.addEventListener('input', function() {
         backgroundMusic.volume = this.value;
     });
 
-
     function applyBlueTheme() {
-
         const volumeContainer = document.getElementById('volume-control-container');
         volumeContainer.classList.remove('d-none');
-
         document.body.classList.add('blue-theme-body');
-
         document.querySelectorAll('h1, h2, h3').forEach(element => {
             element.classList.add('blue-theme-text');
         });
         let music = document.getElementById('background-music');
-        music.volume = 0.1; // Установим громкость на 20%
+        music.volume = 0.1;
         music.play();
     }
-    // Функция для сброса темы страницы (если понадобится)
+
     function resetTheme() {
         document.body.classList.remove('blue-theme-body');
-
-        // Останавливаем воспроизведение музыки
         let music = document.getElementById('background-music');
         music.pause();
-        music.currentTime = 0; // Сброс к началу
+        music.currentTime = 0;
     }
 
     function createSnowflake() {
         if (snowflakes.length > maxSnowflakes) {
             return;
         }
-        const snowflake = new Image(75, 75);
-        snowflake.src = 'aigis.png';
+        const size = Math.floor(Math.random() * (80 - 30 + 1) + 30);
+        const snowflake = new Image(size, size);
+        snowflake.src = imageSources[Math.floor(Math.random() * imageSources.length)];
         snowflake.classList.add('aigis');
         snowflake.style.left = `${Math.random() * (window.innerWidth - 75)}px`;
         const fallDuration = `${Math.random() * 5 + 5}s`;
