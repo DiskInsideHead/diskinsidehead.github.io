@@ -16,9 +16,19 @@ body.dragover {
     background-color: #f0f0f0;
 }
 #drop-area {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
     border: 2px dashed #ccc;
     padding: 20px;
     margin-bottom: 20px;
+}
+.input-group-text {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
 }
 #drop-area h2 {
     margin-bottom: 20px;
