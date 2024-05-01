@@ -138,12 +138,6 @@ $(document).ready(function() {
             reader.readAsText(slice, "UTF-8");
         }
         processChunk(0);
-        output.onclick = function() {
-            this.select();
-        };
-        output2.onclick = function() {
-            this.select();
-        };
     }
 });
 document.getElementById('clear_button').addEventListener('click', function() {
