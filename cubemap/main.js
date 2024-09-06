@@ -139,17 +139,16 @@ function processImage(data) {
 function renderFace(data, faceName, position) {
     const face = new CubeFace(faceName);
     dom.faces.appendChild(face.anchor);
-    
     const options = {
         data: data,
         face: faceName,
         rotation: Math.PI * settings.cubeRotation.value / 180,
         interpolation: settings.interpolation.value,
     };
-
     const worker = new Worker('convert.js');
-
-    const setDownload = ({ data: imageData }) => {
+    const setDownload = ({
+        data: imageData
+    }) => {
         const extension = settings.format.value;
         getDataURL(imageData, extension).then(url => face.setDownload(url, extension));
         finished++;
@@ -159,41 +158,19 @@ function renderFace(data, faceName, position) {
             workers = [];
         }
     };
-
-    const setPreview = ({ data: imageData }) => {
-        const imgWidth = imageData.width;
-        const imgHeight = imageData.height;
-
-        // Получаем размеры контейнера
-        const containerWidth = face.anchor.clientWidth; 
-        const containerHeight = face.anchor.clientHeight; 
-
-        // Рассчитываем пропорции и максимальные размеры
-        const widthRatio = containerWidth / imgWidth;
-        const heightRatio = containerHeight / imgHeight;
-        const scale = Math.min(widthRatio, heightRatio); // Выбираем минимальное значение
-
-        const maxWidth = imgWidth * scale;
-        const maxHeight = imgHeight * scale;
-
+    const setPreview = ({
+        data: imageData
+    }) => {
         const x = imageData.width * position.x;
         const y = imageData.height * position.y;
-
-        getDataURL(imageData, 'jpg').then(url => {
-            face.setPreview(url, x, y);
-            face.anchor.style.width = `${maxWidth}px`; // Устанавливаем максимальную ширину
-            face.anchor.style.height = `${maxHeight}px`; // Устанавливаем максимальную высоту
-        });
-
+        getDataURL(imageData, 'jpg').then(url => face.setPreview(url, x, y));
         worker.onmessage = setDownload;
         worker.postMessage(options);
     };
-
     worker.onmessage = setPreview;
     worker.postMessage(Object.assign({}, options, {
-        maxWidth: 200,
+        maxWidth: 150,
         interpolation: 'linear',
     }));
-
     workers.push(worker);
 }
