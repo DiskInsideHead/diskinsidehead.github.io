@@ -38,7 +38,7 @@
 					</button>
 				</div>
 			</div>	
-			<div class="container animated-block text-center py-5" id="height_map" style="display: inline-block;float: left;">
+			<div class="container text-center py-5" id="height_map" style="display: inline-block;float: left;">
 				<input id="select_file_height" type="file" accept="image/*, .tga" onpropertychange="handleFileSelect()" style="position:absolute;visibility:hidden;"/>
 				<canvas id="height_canvas" onclick="select_file_height.click()" onmouseover="" style="cursor: pointer;"></canvas>
 			</div>
@@ -81,6 +81,10 @@
 			</div>
 			<div class="view" id="photo_map" style="display: none;">
 				<canvas id="photo_canvas"></canvas>
+			</div>
+			
+			<div style="float:center; margin:-8px 15px 0 0; padding:0 0 0 0;">Size: 
+				<input style="border: none; color:white; background-color: transparent; border-color: transparent;" id="size" type="text" size="30" maxlength="30" readonly>
 			</div>
 			
 
@@ -386,30 +390,26 @@
 			    </div>
 
 			    <!-- Normal Texture -->
-			    <div class="view" id="normal_map">
-			        <span class="helper"></span>
-			        <canvas class="preview_img" id="normal_img"></canvas>
-			    </div>
+				<div class="view" id="normal_map">
+					<span class="helper"></span><canvas class="preview_img" id="normal_img" />
+				</div>
+				
+				<!-- Displacement Texture -->
+				<div class="view" id="displacement_map" style="display: none;">
+					<span class="helper"></span><canvas class="preview_img" id="displace_img" />
+				</div>
+				
+				<!-- Ambient Occlusion Texture -->
+				<div class="view" id="ao_map" style="display: none;">
+					<span class="helper"></span><canvas class="preview_img" id="ao_img" />
+				</div>
 
-			    <!-- Displacement Texture -->
-			    <div class="view" id="displacement_map" style="display: none;">
-			        <span class="helper"></span>
-			        <canvas class="preview_img" id="displace_img"></canvas>
-			    </div>
-
-			    <!-- Ambient Occlusion Texture -->
-			    <div class="view" id="ao_map" style="display: none;">
-			        <span class="helper"></span>
-			        <canvas class="preview_img" id="ao_img"></canvas>
-			    </div>
-
-			    <!-- Specular Texture -->
-			    <div class="view" id="specular_map" style="display: none;">
-			        <span class="helper"></span>
-			        <canvas class="preview_img" id="specular_img"></canvas>
-			    </div>
+				<!-- Specular Texture -->
+				<div class="view" id="specular_map" style="display: none;">
+					<span class="helper"></span><canvas class="preview_img" id="specular_img" />
+				</div>
 			</div>
-
+			
 			<div class="mb-3"></div>
 			<!-- Download Button -->
 			<div class="input-group mb-3">
