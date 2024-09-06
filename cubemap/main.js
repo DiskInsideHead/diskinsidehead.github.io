@@ -169,8 +169,7 @@ function renderFace(data, faceName, position) {
     };
     worker.onmessage = setPreview;
     worker.postMessage(Object.assign({}, options, {
-        maxWidth: window.innerWidth * 0.16,
-        maxHeight: window.innerHeight * 0.16,
+        maxWidth: window.innerWidth * 0.20,
         interpolation: 'linear',
     }));
     workers.push(worker);
