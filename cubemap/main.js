@@ -164,23 +164,25 @@ function renderFace(data, faceName, position) {
         const imgWidth = imageData.width;
         const imgHeight = imageData.height;
 
-
+        // Получаем размеры контейнера
         const containerWidth = face.anchor.clientWidth; 
         const containerHeight = face.anchor.clientHeight; 
 
+        // Рассчитываем пропорции и максимальные размеры
         const widthRatio = containerWidth / imgWidth;
         const heightRatio = containerHeight / imgHeight;
-        const scale = Math.min(widthRatio, heightRatio);
+        const scale = Math.min(widthRatio, heightRatio); // Выбираем минимальное значение
+
         const maxWidth = imgWidth * scale;
         const maxHeight = imgHeight * scale;
 
-        const x = imgWidth * position.x * scale;
-        const y = imgHeight * position.y * scale;
+        const x = imageData.width * position.x;
+        const y = imageData.height * position.y;
 
         getDataURL(imageData, 'jpg').then(url => {
             face.setPreview(url, x, y);
-            face.anchor.style.width = `${maxWidth}px`;
-            face.anchor.style.height = `${maxHeight}px`;
+            face.anchor.style.width = `${maxWidth}px`; // Устанавливаем максимальную ширину
+            face.anchor.style.height = `${maxHeight}px`; // Устанавливаем максимальную высоту
         });
 
         worker.onmessage = setDownload;
