@@ -1,6 +1,7 @@
 body.dragover {
     cursor: copy;
 }
+
 #copy_bones_button {
     width: 40px;
     height: 40px;
@@ -15,6 +16,7 @@ body.dragover {
 .highlight {
     background-color: #f0f0f0;
 }
+
 #drop-area {
     user-select: none;
     -webkit-user-select: none;
@@ -24,6 +26,7 @@ body.dragover {
     padding: 20px;
     margin-bottom: 20px;
 }
+
 .input-group-text {
     user-select: none;
     -webkit-user-select: none;
@@ -108,4 +111,34 @@ body.dragover {
 .blue-theme-text {
     transition: color 1s;
     color: #FFFFFF;
+}
+
+@keyframes slideDownFadeIn {
+    from {
+        transform: scaleY(0);
+        opacity: 0;
+    }
+    to {
+        transform: scaleY(1);
+        opacity: 1;
+    }
+}
+
+.animated-block {
+    transform-origin: top; /* Определяем "начало" трансформации с верхней стороны блока */
+    overflow: hidden; /* Скрыть части элемента, которые выходят за его пределы */
+    animation: slideDownFadeIn 0.3s ease-out forwards;
+    opacity: 0;
+}
+
+@keyframes rotate {
+  from {
+    transform: scale(2) translate(400px,100px) rotate(0deg);
+  }
+  to { 
+    transform: scale(2) translate(400px,100px) rotate(360deg);
+  }
+}
+#burst-container-2 {
+  animation: rotate 240s infinite linear;
 }
