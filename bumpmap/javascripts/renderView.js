@@ -1,6 +1,6 @@
 var NMO_RenderView = new function(){
 	this.scene = new THREE.Scene();
-	this.camera = new THREE.PerspectiveCamera( 30, 1, 0.1, 100000 );
+	this.camera = new THREE.PerspectiveCamera( 35, 1, 0.1, 100000 );
 	this.renderer = new THREE.WebGLRenderer({ alpha: false,  antialias: true });
 	this.displacement_map, this.diffuse_map, this.normal_map, this.specular_map, this.ao_map;
 	this.material;
@@ -26,7 +26,7 @@ var NMO_RenderView = new function(){
 
 	this.initRenderer = function(){
 
-		this.renderer.setSize( NMO_FileDrop.container_height, NMO_FileDrop.container_height );
+		this.renderer.setSize( 800, 800 );
 		//renderer.physicallyBasedShading = true;
 		this.renderer.shadowMap.enabled = true;
 		this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -327,7 +327,7 @@ var NMO_RenderView = new function(){
 	};
 
 }
-
+/*
 $(document).ready(function() {
 	$(".various").fancybox({
 		maxWidth	: 600,
@@ -353,13 +353,16 @@ $(document).ready(function() {
 		closeEffect	: 'none',
 		
 		afterShow: function(){
-			document.getElementById('renderBig').appendChild(NMO_RenderView.renderer.domElement);
-			NMO_RenderView.renderer.setSize( 800, 800 );
+
 
 		},
 		afterClose: function(){
 			document.getElementById('render_view').appendChild(NMO_RenderView.renderer.domElement);
 			NMO_RenderView.renderer.setSize(NMO_FileDrop.container_height, NMO_FileDrop.container_height );
+
+			document.getElementById('renderBig').appendChild(NMO_RenderView.renderer.domElement);
+			NMO_RenderView.renderer.setSize( 800, 800 );
 		}
 	});
 });
+*/

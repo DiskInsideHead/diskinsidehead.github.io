@@ -45,8 +45,8 @@ div.pictures_view_cell {
 canvas.preview_img {
     /*background: #3A6F9A;*/
     vertical-align: middle;
-    max-height: 300px;
-    max-width: 300px;
+    max-height: 800px;
+    max-width: 800px;
 }
 
 body{
