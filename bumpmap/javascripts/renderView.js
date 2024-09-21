@@ -1,7 +1,7 @@
 var NMO_RenderView = new function(){
 	this.scene = new THREE.Scene();
 	this.camera = new THREE.PerspectiveCamera( 35, 1, 0.1, 100000 );
-	this.renderer = new THREE.WebGLRenderer({ alpha: false,  antialias: true });
+	this.renderer = new THREE.WebGLRenderer({ alpha: true,  antialias: true });
 	this.displacement_map, this.diffuse_map, this.normal_map, this.specular_map, this.ao_map;
 	this.material;
 	this.rotation_enabled = true;
