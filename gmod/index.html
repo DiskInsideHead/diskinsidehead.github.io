@@ -1,0 +1,89 @@
+<!DOCTYPE HTML>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Поднебесный сандбокс</title>
+    <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+
+<body>
+    <script>
+
+var albumID = 'AhiiHfd';
+var albumAPI = "https://api.imgur.com/3/album/" + albumID + "/images";
+var imageUrls = [];
+
+var xhr = new XMLHttpRequest();
+xhr.open('GET', albumAPI, true);
+xhr.setRequestHeader('Authorization', 'Client-ID c66c8c9fe60d2e1');
+xhr.responseType = 'json';
+
+xhr.onload = function() {
+    var status = xhr.status;
+    if (status === 200) {
+        var data = xhr.response;
+        // Добавляем ссылки в массив imageUrls
+        for (var i = 0; i < data.data.length; i++) {
+            imageUrls.push(data.data[i].link);
+        }
+
+        shuffleArray(imageUrls);
+
+        console.log(imageUrls);
+
+        const div = document.createElement('div');
+        div.classList.add('background-container');
+
+
+        document.body.appendChild(div);
+
+        const background_blur = document.createElement('img');
+        background_blur.src = "https://i.imgur.com/fWIyegc.png"; // Set the logo image source
+        background_blur.classList.add("background_blur");
+        div.appendChild(background_blur);
+
+        imageUrls.forEach((url, index) => {
+            const img = document.createElement('img');
+            img.src = url;
+            if (index === 0) {
+                img.classList.add('showing');
+            }
+            img.classList.add('background');
+            div.appendChild(img); 
+        });
+
+        const logo = document.createElement('img');
+        logo.src = "https://i.imgur.com/BAcwcXA.png"; 
+        logo.classList.add("logo");
+        div.appendChild(logo);
+        var currentImageIndex = 0; 
+
+        function showNextImage() {
+            const images = div.querySelectorAll('img:is(.background)');
+            images[currentImageIndex].classList.remove('showing');
+            currentImageIndex = (currentImageIndex + 1) % images.length;
+            images[currentImageIndex].classList.add('showing');
+        }
+
+        setInterval(showNextImage, 8000);
+    } else {
+        console.log("ERRORZ");
+    }
+};
+
+xhr.send();
+
+function shuffleArray(array) {
+    for (var i = array.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var temp = array[i];
+        array[i] = array[j];
+        array[j] = temp;
+    }
+}
+
+    </script>
+</body>
+
+</html>
