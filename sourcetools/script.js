@@ -1,3 +1,63 @@
+
+document.getElementById('preset-select').addEventListener('change', function() {
+    const preset = this.value;
+    if (preset === 'basic') {
+        document.getElementById('length').value = 30;
+        document.getElementById('tip_mass').value = 400;
+        document.getElementById('pitch_stiffness').value = 50;
+        document.getElementById('pitch_damping').value = 7;
+        document.getElementById('yaw_stiffness').value = 50;
+        document.getElementById('yaw_damping').value = 50;
+        document.getElementById('along_stiffness').value = 300;
+        document.getElementById('along_damping').value = 0;
+        document.getElementById('angle_constraint').value = 15;
+        document.getElementById('pitch_constraint_s').checked = true;
+        document.getElementById('pitch_constraint_min').value = -1;
+        document.getElementById('pitch_constraint_max').value = 15;
+        document.getElementById('yaw_constraint_s').checked = false;
+        document.getElementById('pitch_friction').value = 0;
+        document.getElementById('pitch_bounce').value = 0;
+        document.getElementById('yaw_friction').value = 0;
+        document.getElementById('yaw_bounce').value = 0;
+    } else if (preset === 'skirt') {
+        document.getElementById('length').value = 20;
+        document.getElementById('tip_mass').value = 0;
+        document.getElementById('pitch_stiffness').value = 100;
+        document.getElementById('pitch_damping').value = 8;
+        document.getElementById('yaw_stiffness').value = 100;
+        document.getElementById('yaw_damping').value = 8;
+        document.getElementById('along_stiffness').value = 100;
+        document.getElementById('along_damping').value = 0;
+        document.getElementById('angle_constraint').value = 30;
+        document.getElementById('pitch_constraint_s').checked = true;
+        document.getElementById('pitch_constraint_min').value = -3;
+        document.getElementById('pitch_constraint_max').value = 30;
+        document.getElementById('yaw_constraint_s').checked = true;
+        document.getElementById('yaw_constraint_min').value = -20;
+        document.getElementById('yaw_constraint_max').value = 20;
+        document.getElementById('pitch_friction').value = 0;
+        document.getElementById('pitch_bounce').value = 0;
+        document.getElementById('yaw_friction').value = 0;
+        document.getElementById('yaw_bounce').value = 0;
+    } else if (preset === 'balls') {
+        document.getElementById('length').value = 20;
+        document.getElementById('tip_mass').value = 0;
+        document.getElementById('pitch_stiffness').value = 300;
+        document.getElementById('pitch_damping').value = 5;
+        document.getElementById('yaw_stiffness').value = 300;
+        document.getElementById('yaw_damping').value = 5;
+        document.getElementById('along_stiffness').value = 100;
+        document.getElementById('along_damping').value = 0;
+        document.getElementById('angle_constraint').value = 6;
+        document.getElementById('pitch_constraint_s').checked = false;
+        document.getElementById('yaw_constraint_s').checked = false;
+        document.getElementById('pitch_friction').value = 0;
+        document.getElementById('pitch_bounce').value = 0;
+        document.getElementById('yaw_friction').value = 0;
+        document.getElementById('yaw_bounce').value = 0;
+    }
+});
+
 $(document).ready(function() {
     const CHUNK_SIZE = 1024 * 1024;
     const output = document.getElementById('output');
@@ -173,9 +233,31 @@ document.getElementById('submit').addEventListener('click', function(e) {
     const yaw_constraint_min = document.getElementById('yaw_constraint_min').value;
     const yaw_constraint_max = document.getElementById('yaw_constraint_max').value;
     const output2 = document.getElementById('output2');
+    const pitch_friction = document.getElementById('pitch_friction').value;
+    const pitch_bounce = document.getElementById('pitch_bounce').value;
+    const yaw_friction = document.getElementById('yaw_friction').value;
+    const yaw_bounce = document.getElementById('yaw_bounce').value;
+
     let resultText = output2.value;
     let lines = resultText.split('\n');
     let modelTemplate = "";
+
+    modelTemplate += ` along_damping ${along_damping}`;
+    if (angle_constraint) {
+        modelTemplate += ` angle_constraint ${angle_constraint}`;
+    }
+    modelTemplate += `\n`;
+    
+    modelTemplate += `pitch_friction ${pitch_friction} pitch_bounce ${pitch_bounce}\n`;
+    modelTemplate += `yaw_friction ${yaw_friction} yaw_bounce ${yaw_bounce}\n`;
+    
+    if (pitch_constraint_s) {
+        modelTemplate += `pitch_constraint ${pitch_constraint_min} ${pitch_constraint_max}\n`;
+    }
+    if (yaw_constraint_s) {
+        modelTemplate += `yaw_constraint ${yaw_constraint_min} ${yaw_constraint_max}\n`;
+    }
+
     lines.forEach((line) => {
         let trimmedLine = line.trim();
         if (trimmedLine) {
