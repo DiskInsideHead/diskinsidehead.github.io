@@ -27,6 +27,20 @@ body.dragover {
     margin-bottom: 20px;
 }
 
+#drop-area2 {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    border: 2px dashed #ccc;
+    padding: 10px;
+    margin-bottom: 20px;
+}
+
+#drop-area2 h2 {
+    margin-bottom: 20px;
+}
+
 .input-group-text {
     user-select: none;
     -webkit-user-select: none;
