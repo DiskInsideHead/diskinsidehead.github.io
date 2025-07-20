@@ -242,29 +242,21 @@ document.getElementById('submit').addEventListener('click', function(e) {
     let lines = resultText.split('\n');
     let modelTemplate = "";
 
-    modelTemplate += ` along_damping ${along_damping}`;
-    if (angle_constraint) {
-        modelTemplate += ` angle_constraint ${angle_constraint}`;
-    }
-    modelTemplate += `\n`;
-    
-    modelTemplate += `pitch_friction ${pitch_friction} pitch_bounce ${pitch_bounce}\n`;
-    modelTemplate += `yaw_friction ${yaw_friction} yaw_bounce ${yaw_bounce}\n`;
-    
-    if (pitch_constraint_s) {
-        modelTemplate += `pitch_constraint ${pitch_constraint_min} ${pitch_constraint_max}\n`;
-    }
-    if (yaw_constraint_s) {
-        modelTemplate += `yaw_constraint ${yaw_constraint_min} ${yaw_constraint_max}\n`;
-    }
-
     lines.forEach((line) => {
         let trimmedLine = line.trim();
         if (trimmedLine) {
             modelTemplate += `$jigglebone "${trimmedLine}"\n{\nis_flexible\n{\n`;
             modelTemplate += `length ${length} tip_mass ${tip_mass} pitch_stiffness ${pitch_stiffness} pitch_damping ${pitch_damping}`;
             modelTemplate += ` yaw_stiffness ${yaw_stiffness} yaw_damping ${yaw_damping} along_stiffness ${along_stiffness}`;
-            modelTemplate += ` along_damping ${along_damping} angle_constraint ${angle_constraint}\n`;
+            modelTemplate += ` along_damping ${along_damping}`;
+            if (angle_constraint) {
+                modelTemplate += ` angle_constraint ${angle_constraint}`;
+            }
+            modelTemplate += `\n`;
+            
+            modelTemplate += `pitch_friction ${pitch_friction} pitch_bounce ${pitch_bounce}\n`;
+            modelTemplate += `yaw_friction ${yaw_friction} yaw_bounce ${yaw_bounce}\n`;
+            
             if (pitch_constraint_s) {
                 modelTemplate += `pitch_constraint ${pitch_constraint_min} ${pitch_constraint_max}\n`;
             }
