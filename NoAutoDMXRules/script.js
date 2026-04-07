@@ -148,7 +148,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        return "Others";
+        return "other";
     }
                         
     function getRestName(fullName) {
@@ -156,10 +156,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const filteredParts = parts.filter(part => {
             const lowerPart = part.toLowerCase();
-            return !groupMapping[lowerPart] && !Object.values(groupMapping).includes(lowerPart);
+            return lowerPart;
         });
 
-        return filteredParts.join(' ').trim() || "";
+        return filteredParts.join('_').trim() || "";
     }   
     
     function parseDmxToQc(dmxData) {

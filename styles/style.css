@@ -60,9 +60,7 @@ html, body {
     -moz-user-select: none;
     -ms-user-select: none;
 }
-#drop-area h2 {
-    margin-bottom: 20px;
-}
+
 #modal {
     position: fixed;
     top: 0;

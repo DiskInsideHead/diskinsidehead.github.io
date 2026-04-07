@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Combine Normal Maps — DIH Tools</title>
+    <link crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="icon" type="image/x-icon" href="../styles/dih.ico">
+    <link href="../styles/style.css" rel="stylesheet">
+    <link href="../styles/foundation-icons.css" rel="stylesheet">
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden; 
+        }
+
+        .preview-box {
+            width: 100%;
+            aspect-ratio: 1 / 1; 
+            background: #1a1a2e;
+            border-radius: 12px;
+            border: 2px solid #dee2e6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
+        .col-lg-9 .preview-box {
+            aspect-ratio: auto; 
+        }
+
+        #outCanvas {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain; 
+            image-rendering: pixelated; 
+        }
+
+        .drop-zone {
+            transition: transform 0.2s ease;
+        }
+
+        .drop-zone:hover {
+            transform: scale(1.02);
+        }
+        :root { --panel-bg: #ffffff; --accent-color: #286090; }
+        .preview-box img, .preview-box canvas {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .node-label {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.6);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            z-index: 5;
+        }
+        .drop-zone.bg-light { border-color: var(--accent-color) !important; border-style: dashed !important; }
+    </style>
+    <!-- Yandex.Metrika counter -->
+    <script type="text/javascript" >
+       (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+       m[i].l=1*new Date();
+       for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+       k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+       (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+
+       ym(98502245, "init", {
+            clickmap:true,
+            trackLinks:true,
+            accurateTrackBounce:true,
+            webvisor:true
+       });
+    </script>
+    <noscript><div><img src="https://mc.yandex.ru/watch/98502245" style="position:absolute; left:-9999px;" alt="" /></div></noscript>
+    <!-- /Yandex.Metrika counter -->
+</head>
+<body>
+
+<div class="container-fluid vh-100 d-flex flex-column py-3 overflow-hidden container animated-block">
+    <div class="text-center" id="drop-area">
+        <div>
+            <h2>
+                DmElement to QC Converter
+            </h2>
+        </div>
+    </div>
+
+    <div class="row flex-grow-1 overflow-hidden g-2 ">
+        
+        <div class="col-lg-2 d-flex flex-column g-2 h-100 overflow-auto mt-0">
+            
+            <label for="baseMap" class="w-100 mb-2" style="cursor: pointer;">
+                <div class="drop-zone">
+                    <div class="preview-box" id="basePreview">
+                        <span class="node-label">BASE</span>
+                        <span class="text-secondary small text-center px-2">Drop Base Map</span>
+                    </div>
+                </div>
+                <input type="file" id="baseMap" accept=".jpg,.jpeg,.png,.webp,.tga,.bmp" class="visually-hidden">
+            </label>
+
+            <div class="text-center fw-bold text-muted mb-2">+</div>
+
+            <label for="detailMap" class="w-100 mb-3" style="cursor: pointer;">
+                <div class="drop-zone">
+                    <div class="preview-box" id="detailPreview">
+                        <span class="node-label">DETAIL</span>
+                        <span class="text-secondary small text-center px-2">Drop Detail Map</span>
+                    </div>
+                </div>
+                <input type="file" id="detailMap" accept=".jpg,.jpeg,.png,.webp,.tga,.bmp" class="visually-hidden">
+            </label>
+
+            <div class="p-3 border rounded bg-white shadow-sm mt-auto mb-1">
+                <label for="strengthRange" class="form-label fw-bold small">
+                    <i class="fi-widget"></i> Adjust strength: <span id="strengthVal">1.00</span>
+                </label>
+                <input type="range" class="form-range" id="strengthRange" min="0" max="2" step="0.01" value="1.0">
+
+                <label for="scaleRange" class="form-label fw-bold small mt-2">
+                    <i class="fi-magnifying-glass"></i> Detail Scale: <span id="scaleVal">1.00</span>
+                </label>
+                <input type="range" class="form-range" id="scaleRange" min="0.1" max="10" step="0.1" value="1.0">
+                
+                <button id="downloadBtn" class="btn btn-success btn-sm w-100 mt-3 fw-bold">
+                    <i class="fi-download"></i> Download PNG
+                </button>
+            </div>
+        </div>
+
+        <div class="col-lg-10 h-100 mt-auto mb-2">
+            <div class="preview-box w-100 h-100 m-0" style="background: #0f0f1e; border-width: 3px;">
+                <span class="node-label">COMBINED</span>
+                <canvas id="outCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="script.js"></script>
+<script src="../styles/script.js"></script>
+</body>
+</html>

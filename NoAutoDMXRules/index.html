@@ -17,7 +17,7 @@
                 
         textarea {
             width: 100%;
-            height: 400px;
+            height: 380px;
             background-color: #2a2a2a;
             color: var(--text-color);
             border: 1px solid var(--border-color);
@@ -145,6 +145,94 @@
             opacity: 1;
         }
 
+        .info-section {
+            background: #ffffff;
+            border: 1px solid #e0e6ed;
+            border-radius: 12px;
+            padding: 0;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            margin-top: 2rem;
+            color: #333;
+        }
+
+        .nav-tabs {
+            border-bottom: 1px solid #e0e6ed;
+            background: #f8f9fa;
+        }
+
+        .nav-link {
+            color: #6c757d;
+            border: none !important;
+            padding: 12px 20px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .nav-link.active {
+            color: var(--accent-color) !important;
+            background: #fff !important;
+            position: relative;
+        }
+
+        .nav-link.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--accent-color);
+        }
+
+        .tab-content {
+            padding: 20px;
+        }
+
+        .step-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 10px;
+            font-size: 0.95rem;
+        }
+
+        .step-number {
+            background: var(--highlight-color);
+            color: var(--accent-color);
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            flex-shrink: 0;
+            font-size: 0.8rem;
+        }
+
+        .group-tag-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .group-tag {
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .group-tag strong {
+            color: var(--accent-color);
+            text-transform: uppercase;
+            font-size: 0.75rem;
+        }
     </style>
 </head>
 <body>
@@ -154,17 +242,14 @@
                 <h2>
                     DmElement to QC Converter
                 </h2>
-                <p class="subtitle lead">Convert Source Engine DmElement facial animation data to QC format</p>
             </div>
-            
         </div>
-        
         <div class="row g-4 mb-4">
             <div class="col-lg-6">
                 <div>
                     <h2 id="drop-area" class="mb-3">Input DmElement</h2>
-                    <textarea id="dmx-input" class="form-control mb-4 mr-sm-2" placeholder="Paste your DmElement data here...">DmElement
-{
+                    <textarea id="dmx-input" class="form-control mr-sm-2" placeholder="Paste your DmElement data here...">DmElement
+    {
     "id" "elementid" "bd6f0fa7-76b1-341c-afc3-bcab581ac983"
     "name" "string" "flex_R2JietaweiMd010011Face"
     "combinationOperator" "DmeCombinationOperator"
@@ -263,7 +348,7 @@
             }
         ]
     }
-                    }</textarea>
+}</textarea>
                 </div>
             </div>
             
@@ -280,81 +365,60 @@
             <button id="copy-btn" class="btn btn-outline-primary btn-lg">Copy</button>
             <button id="clear-btn" class="btn btn-outline-secondary btn-lg">Clear</button>
         </div>
-        
-        <div class="info">
-            <div class="row g-4">
-                <div class="col-md-6">
-                    <h3 class="mb-3">How to Use</h3>
-                    <ul class="text-start">
-                        <li>Replace all "_" or " " with "|" in shapekeys of your mesh in 3D software</li>
-                        <li>Generate and paste your DmElement facial animation data in the left panel</li>
-                        <li>Click "Convert" to generate QC code</li>
-                        <li>Copy the output to your Source Engine QC file</li>
-                        <li>Replace "[FACE]" with your model name and "head.dmx" with your mesh name</li>
-                    </ul>
+
+        <div class="info-section">
+            <ul class="nav nav-tabs" id="infoTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="how-to-tab" data-bs-toggle="tab" data-bs-target="#how-to" type="button" role="tab">
+                        <i class="fi-info"></i> How to Use
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="groups-tab" data-bs-toggle="tab" data-bs-target="#groups" type="button" role="tab">
+                        <i class="fi-list"></i> Supported Groups
+                    </button>
+                </li>
+            </ul>
+
+            <div class="tab-content" id="infoTabsContent">
+                <div class="tab-pane fade show active" id="how-to" role="tabpanel">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="step-item">
+                                <div class="step-number">1</div>
+                                <div>Replace <code>_</code> or <code>space</code> with <code>|</code> in your shapekeys.</div>
+                            </div>
+                            <div class="step-item">
+                                <div class="step-number">2</div>
+                                <div>Paste your DmElement data in the left panel.</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="step-item">
+                                <div class="step-number">3</div>
+                                <div>Click <strong>Convert</strong> and copy the result to your QC file.</div>
+                            </div>
+                            <div class="step-item">
+                                <div class="step-number">4</div>
+                                <div>Update <code>[FACE]</code> and <code>head.dmx</code> placeholders.</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                
-                <div class="col-md-6">
-                    <h3 class="mb-3">Supported Facial Groups</h3>
-                    <p>The converter automatically detects and groups these facial controls:</p>
-                    
-                    <div class="groups-grid">
-                        <div class="group-card">
-                            <h4>eyebrow</h4>
-                            <ul>
-                                <li>eyebrow</li>
-                                <li>brow</li>
-                                <li>brows</li>
-                                <li>eyebrows</li>
-                            </ul>
-                        </div>
-                        <div class="group-card">
-                            <h4>eye</h4>
-                            <ul>
-                                <li>eye</li>
-                                <li>eyes</li>
-                            </ul>
-                        </div>
-                        <div class="group-card">
-                            <h4>eyelid</h4>
-                            <ul>
-                                <li>eyelid</li>
-                                <li>eyelids</li>
-                            </ul>
-                        </div>
-                        <div class="group-card">
-                            <h4>mouth</h4>
-                            <ul>
-                                <li>mouth</li>
-                                <li>lip</li>
-                                <li>lips</li>
-                            </ul>
-                        </div>
-                        <div class="group-card">
-                            <h4>nose</h4>
-                            <ul>
-                                <li>nose</li>
-                                <li>noses</li>
-                            </ul>
-                        </div>
-                        <div class="group-card">
-                            <h4>cheek</h4>
-                            <ul>
-                                <li>cheek</li>
-                                <li>cheeks</li>
-                            </ul>
-                        </div>
-                        <div class="group-card">
-                            <h4>Other Groups</h4>
-                            <ul>
-                                <li>etc..</li>
-                            </ul>
-                        </div>
+
+                <div class="tab-pane fade" id="groups" role="tabpanel">
+                    <div class="group-tag-container">
+                        <div class="group-tag"><strong>EYEBRYOW:</strong> eyebrow, eyebrows, brow, brows</div>
+                        <div class="group-tag"><strong>EYE:</strong> eye, eyes</div>
+                        <div class="group-tag"><strong>EYELID:</strong> eyelid, eyelids</div>
+                        <div class="group-tag"><strong>MOUTH:</strong> mouth, lip, lips</div>
+                        <div class="group-tag"><strong>CHEEK:</strong> cheek, cheeks</div>
+                        <div class="group-tag"><strong>NOSE:</strong> nose, noses</div>
+                        <div class="group-tag" style="border-style: dashed; background: transparent;">+ other groups</div>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
     <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
     <script crossorigin="anonymous" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="../styles/script.js"></script>
