@@ -17,7 +17,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let imagesLoaded = { base: false, detail: false };
     let renderRequested = false;
 
-    // --- Shader Sources ---
     const vsSource = `
         attribute vec2 a_position;
         varying vec2 v_texCoord;
@@ -116,10 +115,8 @@ document.addEventListener('DOMContentLoaded', () => {
         textures[type] = createTexture(gl, img);
         updatePreview(type === 'base' ? 'basePreview' : 'detailPreview', img.src, type.toUpperCase());
         
-        // Рендерим сразу после загрузки
         render(); 
         
-        // Даем браузеру 100мс отрисовать превью, прежде чем убить ссылку на файл
         const currentSrc = img.src;
         setTimeout(() => URL.revokeObjectURL(currentSrc), 100); 
     }
@@ -200,15 +197,12 @@ document.addEventListener('DOMContentLoaded', () => {
         container.innerHTML = `<span class="node-label">${label}</span><img src="${src}" style="max-width:100%; max-height:100%;">`;
     }
 
-
     window.addEventListener('dragover', e => e.preventDefault(), false);
     window.addEventListener('drop', e => e.preventDefault(), false);
         
-    // Исправленная логика Drag-and-drop
     [baseInput, detailInput].forEach(input => {
         const zone = input.parentElement.querySelector('.drop-zone');
 
-        // Обязательно предотвращаем дефолтное поведение для всех событий
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
             zone.addEventListener(eventName, (e) => {
                 e.preventDefault();
@@ -216,7 +210,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }, false);
         });
 
-        // Визуальный отклик
         zone.addEventListener('dragover', () => zone.classList.add('bg-light'));
         zone.addEventListener('dragleave', () => zone.classList.remove('bg-light'));
 
@@ -227,8 +220,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const files = dt.files;
 
             if (files.length > 0) {
-                input.files = files; // Передаем файл в скрытый инпут
-                // Принудительно вызываем событие change, чтобы сработал onImageSelect
+                input.files = files;
                 input.dispatchEvent(new Event('change', { bubbles: true }));
             }
         });
