@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
     <head>
         <meta charset="utf-8"/>
         <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
@@ -50,7 +50,7 @@
             <div id="drop-area">
                 <div>
                     <h2>Matcap → Source EnvMap (VTF/VMT)</h2>
-                    <p class="mb-3">Разворачивает matcap-сферу в 6 граней кубмапы (sphere-map проекция) и собирает готовый .vtf + .vmt. Всё считается локально в браузере.</p>
+                    <p class="mb-3">Unwraps a matcap sphere into a 6-face cubemap and builds a ready .vtf + .vmt. Runs entirely in your browser.</p>
                     <input accept="image/*" class="form-control form-control-lg" id="imageInput" type="file">
                 </div>
             </div>
@@ -58,8 +58,8 @@
             <div class="row">
                 <div class="col-sm">
                     <div id="settings-area">
-                        <h3>Размер грани</h3>
-                        <fieldset title="Размер каждой из 6 граней кубмапы.">
+                        <h3>Face size</h3>
+                        <fieldset title="Size of each of the 6 cubemap faces.">
                             <div class="btn-group">
                                 <input class="btn-check" id="size-256" name="faceSize" type="radio" value="256">
                                 <label class="btn btn-outline-primary" for="size-256">256</label>
@@ -75,7 +75,7 @@
                 </div>
                 <div class="col-sm">
                     <div id="settings-area">
-                        <h3>Путь материала</h3>
+                        <h3>Material path</h3>
                         <div class="input-group mb-2 mr-sm-2">
                             <div class="input-group-text">materials/</div>
                             <input class="form-control" id="matPath" type="text" value="models/props/matcap_ball/matcap">
@@ -84,11 +84,11 @@
                 </div>
                 <div class="col-sm">
                     <div id="settings-area">
-                        <h3>Опции VTF</h3>
+                        <h3>VTF options</h3>
                         <div class="form-check text-start">
                             <input class="form-check-input" type="checkbox" id="flipRows">
                             <label class="form-check-label" for="flipRows">
-                                Перевернуть строки (если в VTFEdit вверх ногами)
+                                Flip rows (if upside down in VTFEdit)
                             </label>
                         </div>
                     </div>
@@ -96,30 +96,23 @@
             </div>
 
             <div id="drop-area">
-                <button class="btn btn-primary btn-lg" id="generateBtn" disabled>Сгенерировать</button>
+                <button class="btn btn-primary btn-lg" id="generateBtn" disabled>Generate</button>
                 <p id="status" class="mt-2 mb-0 note-text"></p>
             </div>
 
-            <div id="drop-area2" id="resultArea" style="display:none">
-                <h3>Грани кубмапы</h3>
+            <div id="resultArea" class="drop-area2" style="display:none">
+                <h3>Cubemap faces</h3>
                 <output id="facesOutput"></output>
-                <p class="note-text mt-2">Грань <b>nz</b> (задняя) всегда растянута "звездой" — это не баг: matcap физически не хранит информацию о задней полусфере шара, вся она сжата в контур изображения.</p>
 
                 <div class="d-flex gap-2 justify-content-center flex-wrap mt-3 mb-3">
-                    <button class="btn btn-success" id="dlVtf">Скачать .vtf</button>
-                    <button class="btn btn-outline-secondary" id="dlVmt">Скачать .vmt</button>
-                    <button class="btn btn-outline-secondary" id="dlPngZip">Скачать 6 граней (.zip)</button>
+                    <button class="btn btn-success" id="dlVtf">Download .vtf</button>
+                    <button class="btn btn-outline-secondary" id="dlVmt">Download .vmt</button>
+                    <button class="btn btn-outline-secondary" id="dlPngZip">Download 6 faces (.zip)</button>
                 </div>
 
                 <h3>.vmt</h3>
                 <pre id="vmtPreview"></pre>
-                <p class="note-text">
-                    .vtf собирается вручную по спецификации Valve Texture Format 7.1 (RGBA8888, 1 mip, флаг ENVMAP) —
-                    самодельный писатель формата, не готовая либа. Перед использованием в игре открой файл в VTFEdit:
-                    если превью нормальное — сразу в <code>materials/</code>, если перевёрнуто — включи галку выше и
-                    перегенерируй, если VTFEdit вообще не открывает — импортируй туда вручную 6 PNG из зип-архива
-                    как грани кубмапы.
-                </p>
+                <p class="note-text">Check the .vtf in VTFEdit before using it in-game.</p>
             </div>
         </div>
 

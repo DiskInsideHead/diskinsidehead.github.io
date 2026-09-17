@@ -18,7 +18,7 @@ imageInput.addEventListener('change', () => {
         const id = ctx.getImageData(0, 0, img.width, img.height);
         srcData = id.data; srcW = img.width; srcH = img.height;
         generateBtn.disabled = false;
-        statusEl.textContent = `Загружено: ${img.width}×${img.height}`;
+        statusEl.textContent = `Loaded: ${img.width}×${img.height}`;
     };
     img.src = URL.createObjectURL(f);
 });
@@ -146,14 +146,14 @@ function buildVMT(matPath) {
     const envName = matPath + '_env';
     return `"UnlitGeneric"
 {
-    // matcap-look: только отражение, без базовой текстуры
+    // matcap look: reflection only, no base texture
     "$envmap"        "${envName}"
     "$envmaptint"    "[1 1 1]"
     "$envmapfresnel" 0
     "$nofog"         0
 }
 
-// Альтернатива для обычного пропа с текстурой + немного отражения:
+// Alternative for a regular prop with a texture + a bit of reflection:
 // "VertexLitGeneric"
 // {
 //     "$basetexture"   "${matPath}_base"
@@ -263,7 +263,7 @@ function getFaceSize() {
 
 generateBtn.addEventListener('click', () => {
     if (!srcData) return;
-    statusEl.textContent = 'Генерирую грани...';
+    statusEl.textContent = 'Generating faces...';
     generateBtn.disabled = true;
     setTimeout(() => {
         const size = getFaceSize();
@@ -271,7 +271,7 @@ generateBtn.addEventListener('click', () => {
         generatedFaces = faces; generatedSize = size;
         renderPreview(faces, size);
         document.getElementById('vmtPreview').textContent = buildVMT(document.getElementById('matPath').value.trim());
-        statusEl.textContent = 'Готово.';
+        statusEl.textContent = 'Done.';
         generateBtn.disabled = false;
     }, 20);
 });
