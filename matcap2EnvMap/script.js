@@ -96,23 +96,83 @@ function faceDir(face, a, b) {
     }
 }
 
+// Функция выборки с возможностью размытия вокруг UV-координаты
+function sampleMatcap(u, v, blurRadius = 0) {
+    u = Math.min(Math.max(u, 0), 1);
+    v = Math.min(Math.max(v, 0), 1);
+
+    if (blurRadius <= 0) {
+        return bilinear(u, v);
+    }
+
+    // Суперсэмплинг (4 точки вокруг) для гашения артефактов полюса
+    const step = blurRadius / srcW;
+    const p0 = bilinear(u, v);
+    const p1 = bilinear(u + step, v);
+    const p2 = bilinear(u - step, v);
+    const p3 = bilinear(u, v + step);
+    const p4 = bilinear(u, v - step);
+
+    return [
+        (p0[0] + p1[0] + p2[0] + p3[0] + p4[0]) / 5,
+        (p0[1] + p1[1] + p2[1] + p3[1] + p4[1]) / 5,
+        (p0[2] + p1[2] + p2[2] + p3[2] + p4[2]) / 5,
+        255
+    ];
+}
+
 function generateFaces(size) {
     const result = {};
+
     for (const face of FACES) {
         const buf = new Uint8ClampedArray(size * size * 4);
+
         for (let row = 0; row < size; row++) {
             const b = 1 - 2 * row / (size - 1);
+
             for (let col = 0; col < size; col++) {
                 const a = -1 + 2 * col / (size - 1);
                 let [dx, dy, dz] = faceDir(face, a, b);
+
                 const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
                 dx /= len; dy /= len; dz /= len;
-                const m = 2 * Math.sqrt(Math.max(dx * dx + dy * dy + (dz + 1) * (dz + 1), 1e-6));
-                const u = dx / m + 0.5;
-                const v = 1 - (dy / m + 0.5);
-                const [r, g, bl] = bilinear(u, v);
+
+                const rXY = Math.sqrt(dx * dx + dy * dy);
+                
+                let u, v;
+                let blurAmount = 0;
+
+                if (rXY < 1e-6) {
+                    // Самый центр полюса
+                    u = 0.5;
+                    v = 0.5;
+                    blurAmount = 2.0;
+                } else {
+                    // Угол отклонения theta (от 0 на +Z до PI на -Z)
+                    const theta = Math.atan2(rXY, dz);
+                    
+                    // Переводим полярный радиус в диапазоне 0..0.5
+                    const r = (theta / Math.PI) * 0.5;
+
+                    u = 0.5 + (dx / rXY) * r;
+                    v = 0.5 - (dy / rXY) * r; // Инвертируем Y для корректной сетки
+
+                    // Если точка смотрит назад (dz < 0) или слишком близко к центру/краю — наращиваем размытие
+                    if (dz < 0) {
+                        blurAmount = Math.pow(Math.abs(dz), 1.5) * 4.0;
+                    } else if (rXY < 0.05) {
+                        blurAmount = (1 - rXY / 0.05) * 2.0;
+                    }
+                }
+
+                // Выборка пикселя с адаптивным сглаживанием
+                const [r, g, bl] = sampleMatcap(u, v, blurAmount);
+
                 const off = (row * size + col) * 4;
-                buf[off] = r; buf[off + 1] = g; buf[off + 2] = bl; buf[off + 3] = 255;
+                buf[off] = r;
+                buf[off + 1] = g;
+                buf[off + 2] = bl;
+                buf[off + 3] = 255;
             }
         }
         result[face] = buf;
