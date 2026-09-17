@@ -85,6 +85,15 @@
                 <div class="col-sm">
                     <div id="settings-area">
                         <h3>VTF options</h3>
+                        <div class="mb-2 text-start">
+                            <label for="pixelFormat" class="form-label mb-1" style="font-size:13px;">Pixel format</label>
+                            <select class="form-select form-select-sm" id="pixelFormat">
+                                <option value="RGBA8888" selected>RGBA8888 (без сжатия)</option>
+                                <option value="BGRA8888">BGRA8888 (без сжатия)</option>
+                                <option value="BGR888">BGR888 (без альфы, без сжатия)</option>
+                                <option value="DXT1">DXT1 (сжатый, ~в 8 раз меньше)</option>
+                            </select>
+                        </div>
                         <div class="form-check text-start">
                             <input class="form-check-input" type="checkbox" id="flipRows">
                             <label class="form-check-label" for="flipRows">

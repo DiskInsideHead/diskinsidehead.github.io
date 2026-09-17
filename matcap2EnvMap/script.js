@@ -97,9 +97,124 @@ function renderPreview(faces, size) {
     }
 }
 
-function buildVTF(faces, size, flipRows) {
+// ---------- VTF pixel format packing ----------
+
+const VTF_FORMATS = {
+    RGBA8888: 0,
+    BGR888: 3,
+    BGRA8888: 12,
+    DXT1: 13,
+};
+
+function packBGRA8888(src) {
+    const out = new Uint8Array(src.length);
+    for (let i = 0; i < src.length; i += 4) {
+        out[i] = src[i + 2]; out[i + 1] = src[i + 1]; out[i + 2] = src[i]; out[i + 3] = src[i + 3];
+    }
+    return out;
+}
+
+function packBGR888(src) {
+    const px = src.length / 4;
+    const out = new Uint8Array(px * 3);
+    for (let i = 0, j = 0; i < src.length; i += 4, j += 3) {
+        out[j] = src[i + 2]; out[j + 1] = src[i + 1]; out[j + 2] = src[i];
+    }
+    return out;
+}
+
+// Minimal DXT1 (BC1, opaque) encoder: per 4x4 block picks min/max RGB as the
+// two 565 endpoints, no cluster-fit optimization. Good enough for matcap reflections.
+function rgb565(r, g, b) {
+    return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+}
+function unpack565(c) {
+    const r5 = (c >> 11) & 0x1f, g6 = (c >> 5) & 0x3f, b5 = c & 0x1f;
+    return [(r5 << 3) | (r5 >> 2), (g6 << 2) | (g6 >> 4), (b5 << 3) | (b5 >> 2)];
+}
+function encodeDXT1Block(src, size, bx, by) {
+    let minR = 255, minG = 255, minB = 255, maxR = 0, maxG = 0, maxB = 0;
+    const pixels = new Array(16);
+    let p = 0;
+    for (let y = 0; y < 4; y++) {
+        const py = Math.min(by + y, size - 1);
+        for (let x = 0; x < 4; x++) {
+            const px_ = Math.min(bx + x, size - 1);
+            const off = (py * size + px_) * 4;
+            const r = src[off], g = src[off + 1], b = src[off + 2];
+            pixels[p++] = [r, g, b];
+            if (r < minR) minR = r; if (g < minG) minG = g; if (b < minB) minB = b;
+            if (r > maxR) maxR = r; if (g > maxG) maxG = g; if (b > maxB) maxB = b;
+        }
+    }
+    let c0 = rgb565(maxR, maxG, maxB);
+    let c1 = rgb565(minR, minG, minB);
+    if (c0 === c1) { if (c0 > 0) c1 = c0 - 1; else c0 = c1 + 1; }
+    if (c0 < c1) { const t = c0; c0 = c1; c1 = t; } // opaque mode needs c0 > c1
+
+    const [r0, g0, b0] = unpack565(c0);
+    const [r1, g1, b1] = unpack565(c1);
+    const palette = [
+        [r0, g0, b0],
+        [r1, g1, b1],
+        [(2 * r0 + r1) / 3, (2 * g0 + g1) / 3, (2 * b0 + b1) / 3],
+        [(r0 + 2 * r1) / 3, (g0 + 2 * g1) / 3, (b0 + 2 * b1) / 3],
+    ];
+
+    let indices = 0;
+    for (let i = 15; i >= 0; i--) {
+        const [pr, pg, pb] = pixels[i];
+        let best = 0, bestDist = Infinity;
+        for (let k = 0; k < 4; k++) {
+            const [cr, cg, cb] = palette[k];
+            const d = (pr - cr) ** 2 + (pg - cg) ** 2 + (pb - cb) ** 2;
+            if (d < bestDist) { bestDist = d; best = k; }
+        }
+        indices = (indices << 2) | best;
+    }
+    return { c0, c1, indices };
+}
+function packDXT1(src, size) {
+    const blocksPerSide = size / 4;
+    const out = new Uint8Array(blocksPerSide * blocksPerSide * 8);
+    let o = 0;
+    for (let by = 0; by < size; by += 4) {
+        for (let bx = 0; bx < size; bx += 4) {
+            const { c0, c1, indices } = encodeDXT1Block(src, size, bx, by);
+            out[o] = c0 & 0xff; out[o + 1] = (c0 >> 8) & 0xff;
+            out[o + 2] = c1 & 0xff; out[o + 3] = (c1 >> 8) & 0xff;
+            out[o + 4] = indices & 0xff;
+            out[o + 5] = (indices >> 8) & 0xff;
+            out[o + 6] = (indices >> 16) & 0xff;
+            out[o + 7] = (indices >> 24) & 0xff;
+            o += 8;
+        }
+    }
+    return out;
+}
+
+function packFace(rgba, size, format) {
+    switch (format) {
+        case 'BGRA8888': return packBGRA8888(rgba);
+        case 'BGR888': return packBGR888(rgba);
+        case 'DXT1': return packDXT1(rgba, size);
+        default: return rgba; // RGBA8888
+    }
+}
+function faceByteSize(size, format) {
+    switch (format) {
+        case 'BGRA8888': return size * size * 4;
+        case 'BGR888': return size * size * 3;
+        case 'DXT1': return (size / 4) * (size / 4) * 8;
+        default: return size * size * 4; // RGBA8888
+    }
+}
+
+// ---------- VTF file assembly ----------
+
+function buildVTF(faces, size, flipRows, format) {
     const headerSize = 64;
-    const faceBytes = size * size * 4;
+    const faceBytes = faceByteSize(size, format);
     // VTF v7.1–7.4 cubemap обязан содержать 7 граней: 6 настоящих
     // + 7-я легаси "spheremap" (движком не используется, но без неё
     // размер файла не совпадает с тем, что ждёт заголовок — файл не открывается)
@@ -123,30 +238,29 @@ function buildVTF(faces, size, flipRows) {
     wF32(0.5); wF32(0.5); wF32(0.5);
     wU32(0);
     wF32(1.0);
-    wU32(0); // RGBA8888
+    wU32(VTF_FORMATS[format]);
     wU8(1);
     dv.setInt32(o, -1, true); o += 4; // no low-res thumb
     wU8(0); wU8(0);
     wU8(0);
 
-    const writeFace = (src) => {
-        if (!flipRows) {
-            new Uint8Array(buf, o, faceBytes).set(src);
-            o += faceBytes;
-        } else {
-            for (let row = size - 1; row >= 0; row--) {
-                const rowBytes = src.subarray(row * size * 4, (row + 1) * size * 4);
-                new Uint8Array(buf, o, size * 4).set(rowBytes);
-                o += size * 4;
+    const writeFace = (rawRgba) => {
+        let src = rawRgba;
+        if (flipRows) {
+            const rowBytes = size * 4;
+            const flipped = new Uint8ClampedArray(rawRgba.length);
+            for (let row = 0; row < size; row++) {
+                flipped.set(rawRgba.subarray(row * rowBytes, (row + 1) * rowBytes), (size - 1 - row) * rowBytes);
             }
+            src = flipped;
         }
+        const packed = packFace(src, size, format);
+        new Uint8Array(buf, o, faceBytes).set(packed);
+        o += faceBytes;
     };
 
-    for (const face of FACES) {
-        writeFace(faces[face]);
-    }
-    // 7-я грань (spheremap-заглушка): дублируем первую — движком не используется,
-    // главное чтобы данные были нужного размера
+    for (const face of FACES) writeFace(faces[face]);
+    // 7-я грань (spheremap-заглушка): дублируем первую — движком не используется
     writeFace(faces[FACES[0]]);
 
     return new Uint8Array(buf);
@@ -289,7 +403,8 @@ generateBtn.addEventListener('click', () => {
 document.getElementById('dlVtf').addEventListener('click', () => {
     if (!generatedFaces) return;
     const flip = document.getElementById('flipRows').checked;
-    const vtf = buildVTF(generatedFaces, generatedSize, flip);
+    const format = document.getElementById('pixelFormat').value;
+    const vtf = buildVTF(generatedFaces, generatedSize, flip, format);
     const matPath = document.getElementById('matPath').value.trim();
     const name = matPath.split('/').pop() + '_env.vtf';
     download(vtf, name, 'application/octet-stream');
