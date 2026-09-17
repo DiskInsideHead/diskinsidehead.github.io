@@ -100,7 +100,10 @@ function renderPreview(faces, size) {
 function buildVTF(faces, size, flipRows) {
     const headerSize = 64;
     const faceBytes = size * size * 4;
-    const totalSize = headerSize + faceBytes * 6;
+    // VTF v7.1–7.4 cubemap обязан содержать 7 граней: 6 настоящих
+    // + 7-я легаси "spheremap" (движком не используется, но без неё
+    // размер файла не совпадает с тем, что ждёт заголовок — файл не открывается)
+    const totalSize = headerSize + faceBytes * 7;
     const buf = new ArrayBuffer(totalSize);
     const dv = new DataView(buf);
     let o = 0;
@@ -126,8 +129,7 @@ function buildVTF(faces, size, flipRows) {
     wU8(0); wU8(0);
     wU8(0);
 
-    for (const face of FACES) {
-        const src = faces[face];
+    const writeFace = (src) => {
         if (!flipRows) {
             new Uint8Array(buf, o, faceBytes).set(src);
             o += faceBytes;
@@ -138,7 +140,15 @@ function buildVTF(faces, size, flipRows) {
                 o += size * 4;
             }
         }
+    };
+
+    for (const face of FACES) {
+        writeFace(faces[face]);
     }
+    // 7-я грань (spheremap-заглушка): дублируем первую — движком не используется,
+    // главное чтобы данные были нужного размера
+    writeFace(faces[FACES[0]]);
+
     return new Uint8Array(buf);
 }
 
