@@ -264,8 +264,9 @@ function buildVTF(faces, size, flipRows, format) {
     const wU32 = v => { dv.setUint32(o, v, true); o += 4; };
     const wF32 = v => { dv.setFloat32(o, v, true); o += 4; };
 
-    wU8(0x56); wU8(0x46); wU8(0x54); wU8(0x00);
-    wU32(7); wU32(1);
+    // Исправлено: 0x56='V', 0x54='T', 0x46='F', 0x00='\0' (Сигнатура "VTF\0")
+    wU8(0x56); wU8(0x54); wU8(0x46); wU8(0x00);
+    wU32(7); wU32(1);           // Version 7.1
     wU32(headerSize);
     wU16(size); wU16(size);
     const ENVMAP = 0x00004000, NOMIP = 0x00000100, NOLOD = 0x00000200;
@@ -277,7 +278,7 @@ function buildVTF(faces, size, flipRows, format) {
     wF32(1.0);
     wU32(VTF_FORMATS[format]);
     wU8(1);
-    dv.setInt32(o, -1, true); o += 4;
+    dv.setInt32(o, -1, true); o += 4; // Low-res thumb (none)
     wU8(0); wU8(0);
     wU8(0);
 
@@ -297,7 +298,7 @@ function buildVTF(faces, size, flipRows, format) {
     };
 
     for (const face of FACES) writeFace(faces[face]);
-    writeFace(faces[FACES[0]]);
+    writeFace(faces[FACES[0]]); // 7-я грань для совместимости cubemap vtf
 
     return new Uint8Array(buf);
 }
