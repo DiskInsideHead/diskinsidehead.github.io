@@ -43,6 +43,33 @@
                 color: #666;
                 text-align: left;
             }
+
+            .ball-controller-wrap {
+                width: 80px;
+                height: 80px;
+                border-radius: 50%;
+                background: radial-gradient(circle at 35% 35%, #ffffff 0%, #e2e8f0 40%, #94a3b8 100%);
+                border: 2px solid #0d6efd;
+                position: relative;
+                margin: 4px auto 8px auto;
+                cursor: crosshair;
+                box-shadow: inset -2px -2px 6px rgba(0,0,0,0.2), 0 2px 5px rgba(0,0,0,0.1);
+                user-select: none;
+                touch-action: none;
+            }
+            .ball-handle {
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                background-color: #dc3545;
+                border: 2px solid #ffffff;
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                pointer-events: none;
+                box-shadow: 0 0 4px rgba(0,0,0,0.5);
+            }
         </style>
     </head>
     <body>
@@ -55,10 +82,9 @@
                 </div>
             </div>
 
-            <div class="row g-3">
-                <!-- Face Size -->
-                <div class="col-md-4">
-                    <div id="settings-area" class="p-3 border rounded bg-light h-100">
+            <div class="row g-3 mt-1">
+                <div class="col-md-3">
+                    <div class="settings-area p-3 border rounded bg-light h-100">
                         <h3>Face size</h3>
                         <fieldset title="Size of each of the 6 cubemap faces.">
                             <div class="btn-group w-100" role="group">
@@ -75,9 +101,8 @@
                     </div>
                 </div>
 
-                <!-- Compression / Format -->
-                <div class="col-md-4">
-                    <div id="settings-area" class="p-3 border rounded bg-light h-100">
+                <div class="col-md-3">
+                    <div class="settings-area p-3 border rounded bg-light h-100">
                         <h3>Compression</h3>
                         <fieldset title="VTF pixel compression format.">
                             <div class="btn-group w-100" role="group">
@@ -91,9 +116,8 @@
                     </div>
                 </div>
 
-                <!-- Orientation / Flip -->
-                <div class="col-md-4">
-                    <div id="settings-area" class="p-3 border rounded bg-light h-100">
+                <div class="col-md-3">
+                    <div class="settings-area p-3 border rounded bg-light h-100">
                         <h3>Orientation</h3>
                         <fieldset title="Vertical row flipping options.">
                             <div class="btn-group w-100" role="group">
@@ -106,6 +130,41 @@
                         </fieldset>
                     </div>
                 </div>
+
+                <div class="col-md-3">
+                    <div class="settings-area p-3 border rounded bg-light h-100">
+                        <h3>Rotation</h3>
+                        <fieldset title="Drag the dot on the sphere to adjust Pitch and Yaw interactive.">
+                            <div class="ball-controller-wrap" id="ballController">
+                                <div class="ball-handle" id="ballHandle"></div>
+                            </div>
+
+                            <div class="d-flex flex-column gap-1">
+                                <div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <label for="rotX" class="form-label mb-0">Pitch (X):</label>
+                                        <span><strong id="rotXVal">0</strong>°</span>
+                                    </div>
+                                    <input type="range" class="form-range" id="rotX" min="-180" max="180" value="0">
+                                </div>
+                                <div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <label for="rotY" class="form-label mb-0">Yaw (Y):</label>
+                                        <span><strong id="rotYVal">0</strong>°</span>
+                                    </div>
+                                    <input type="range" class="form-range" id="rotY" min="-180" max="180" value="0">
+                                </div>
+                                <div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <label for="rotZ" class="form-label mb-0">Roll (Z):</label>
+                                        <span><strong id="rotZVal">0</strong>°</span>
+                                    </div>
+                                    <input type="range" class="form-range" id="rotZ" min="-180" max="180" value="0">
+                                </div>
+                            </div>
+                        </fieldset>
+                    </div>
+                </div>
             </div>
 
             <br>
@@ -113,7 +172,6 @@
             <div id="drop-area">
                 <button class="btn btn-primary btn-lg" id="generateBtn" disabled>Generate</button>
                 <p id="status" class="mt-2 mb-0 note-text"></p>
-            
 
                 <div id="resultArea" class="drop-area2" style="display:none">
                     <h3>Cubemap faces</h3>
@@ -129,7 +187,6 @@
                     <pre id="vmtPreview"></pre>
                     <p class="note-text">Check the .vtf in VTFEdit before using it in-game.</p>
                 </div>
-
             </div>
         </div>
 

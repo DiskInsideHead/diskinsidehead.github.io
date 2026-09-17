@@ -1,5 +1,8 @@
 let srcData = null, srcW = 0, srcH = 0;
 let generatedFaces = null, generatedSize = 0;
+let renderTimeout = null;
+let isBallInteracting = false;
+let isSliderInteracting = false;
 
 const imageInput = document.getElementById('imageInput');
 const dropArea = document.getElementById('drop-area');
@@ -7,7 +10,12 @@ const generateBtn = document.getElementById('generateBtn');
 const statusEl = document.getElementById('status');
 const resultArea = document.getElementById('resultArea');
 
-// ---------- Функция загрузки и обработки изображения ----------
+const rotXInput = document.getElementById('rotX');
+const rotYInput = document.getElementById('rotY');
+const rotZInput = document.getElementById('rotZ');
+const ballController = document.getElementById('ballController');
+const ballHandle = document.getElementById('ballHandle');
+
 function handleFile(file) {
     if (!file || !file.type.startsWith('image/')) {
         statusEl.textContent = 'Error: Please upload a valid image file.';
@@ -23,20 +31,17 @@ function handleFile(file) {
         srcData = id.data; srcW = img.width; srcH = img.height;
         generateBtn.disabled = false;
         statusEl.textContent = `Loaded: ${file.name} (${img.width}×${img.height})`;
+        runGeneration(false);
     };
     img.src = URL.createObjectURL(file);
 }
 
-// Загрузка через обычный инпут
 imageInput.addEventListener('change', () => {
     if (imageInput.files && imageInput.files[0]) {
         handleFile(imageInput.files[0]);
     }
 });
 
-// ---------- Drag & Drop поддержка ----------
-
-// Отменяем стандартное поведение браузера (открытие файла вместо загрузки)
 ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
     document.addEventListener(eventName, (e) => {
         e.preventDefault();
@@ -44,7 +49,6 @@ imageInput.addEventListener('change', () => {
     }, false);
 });
 
-// Эффект подсвечивания при наведении на зону загрузки
 if (dropArea) {
     ['dragenter', 'dragover'].forEach(eventName => {
         dropArea.addEventListener(eventName, () => dropArea.classList.add('drag-active'), false);
@@ -55,7 +59,6 @@ if (dropArea) {
     });
 }
 
-// Обработка сброса файла (drop) в любое место страницы
 document.addEventListener('drop', (e) => {
     const dt = e.dataTransfer;
     if (dt && dt.files && dt.files.length > 0) {
@@ -63,7 +66,129 @@ document.addEventListener('drop', (e) => {
     }
 });
 
-// ---------- Генерация кубмапы ----------
+function updateHandlePosition(pitchDeg, yawDeg) {
+    if (!ballController || !ballHandle) return;
+    const rect = ballController.getBoundingClientRect();
+    const radius = rect.width / 2;
+
+    const normX = (yawDeg / 180); 
+    const normY = (-pitchDeg / 180);
+
+    const handleX = radius + normX * (radius - 6);
+    const handleY = radius + normY * (radius - 6);
+
+    ballHandle.style.left = `${handleX}px`;
+    ballHandle.style.top = `${handleY}px`;
+}
+
+function handleBallMove(e) {
+    if (!isBallInteracting || !ballController) return;
+
+    const rect = ballController.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    let dx = (clientX - cx) / (rect.width / 2);
+    let dy = (clientY - cy) / (rect.height / 2);
+
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > 1) {
+        dx /= dist;
+        dy /= dist;
+    }
+
+    const yaw = Math.round(dx * 180);
+    const pitch = Math.round(-dy * 180);
+
+    rotYInput.value = yaw;
+    rotXInput.value = pitch;
+
+    document.getElementById('rotYVal').textContent = yaw;
+    document.getElementById('rotXVal').textContent = pitch;
+
+    updateHandlePosition(pitch, yaw);
+    scheduleRender();
+}
+
+if (ballController) {
+    const startBallDrag = (e) => {
+        isBallInteracting = true;
+        handleBallMove(e);
+    };
+
+    ballController.addEventListener('mousedown', startBallDrag);
+    ballController.addEventListener('touchstart', startBallDrag);
+
+    window.addEventListener('mousemove', (e) => {
+        if (isBallInteracting) handleBallMove(e);
+    });
+    window.addEventListener('touchmove', (e) => {
+        if (isBallInteracting) handleBallMove(e);
+    });
+
+    const stopBallDrag = () => {
+        if (isBallInteracting) {
+            isBallInteracting = false;
+            scheduleRender(true);
+        }
+    };
+
+    window.addEventListener('mouseup', stopBallDrag);
+    window.addEventListener('touchend', stopBallDrag);
+}
+
+['rotX', 'rotY', 'rotZ'].forEach(id => {
+    const input = document.getElementById(id);
+    const valSpan = document.getElementById(id + 'Val');
+    if (input && valSpan) {
+        input.addEventListener('mousedown', () => { isSliderInteracting = true; });
+        input.addEventListener('touchstart', () => { isSliderInteracting = true; });
+        
+        input.addEventListener('input', () => {
+            valSpan.textContent = input.value;
+            if (id === 'rotX' || id === 'rotY') {
+                updateHandlePosition(parseFloat(rotXInput.value), parseFloat(rotYInput.value));
+            }
+            scheduleRender();
+        });
+
+        const stopSliderInput = () => {
+            if (isSliderInteracting) {
+                isSliderInteracting = false;
+                scheduleRender(true);
+            }
+        };
+        input.addEventListener('mouseup', stopSliderInput);
+        input.addEventListener('touchend', stopSliderInput);
+        input.addEventListener('change', stopSliderInput);
+    }
+});
+
+function scheduleRender(forceFinal = false) {
+    if (!srcData) return;
+    if (renderTimeout) clearTimeout(renderTimeout);
+
+    const isInteracting = isBallInteracting || isSliderInteracting;
+
+    if (isInteracting && !forceFinal) {
+        runGeneration(true);
+    } else {
+        statusEl.textContent = 'Rendering high quality...';
+        renderTimeout = setTimeout(() => {
+            runGeneration(false);
+        }, 250);
+    }
+}
+
+function sampleFast(u, v) {
+    const x = Math.min(Math.max((u * srcW) | 0, 0), srcW - 1);
+    const y = Math.min(Math.max((v * srcH) | 0, 0), srcH - 1);
+    const idx = (y * srcW + x) * 4;
+    return [srcData[idx], srcData[idx + 1], srcData[idx + 2], 255];
+}
 
 function bilinear(u, v) {
     u = Math.min(Math.max(u, 0), 1);
@@ -96,7 +221,6 @@ function faceDir(face, a, b) {
     }
 }
 
-// Функция выборки с возможностью размытия вокруг UV-координаты
 function sampleMatcap(u, v, blurRadius = 0) {
     u = Math.min(Math.max(u, 0), 1);
     v = Math.min(Math.max(v, 0), 1);
@@ -105,7 +229,6 @@ function sampleMatcap(u, v, blurRadius = 0) {
         return bilinear(u, v);
     }
 
-    // Суперсэмплинг (4 точки вокруг) для гашения артефактов полюса
     const step = blurRadius / srcW;
     const p0 = bilinear(u, v);
     const p1 = bilinear(u + step, v);
@@ -121,8 +244,48 @@ function sampleMatcap(u, v, blurRadius = 0) {
     ];
 }
 
-function generateFaces(size) {
+function getCenterRingColor(ringRadiusUV = 0.04) {
+    let rSum = 0, gSum = 0, bSum = 0;
+    const samples = 8;
+    for (let i = 0; i < samples; i++) {
+        const angle = (i / samples) * Math.PI * 2;
+        const u = 0.5 + Math.cos(angle) * ringRadiusUV;
+        const v = 0.5 + Math.sin(angle) * ringRadiusUV;
+        const col = sampleFast(u, v);
+        rSum += col[0];
+        gSum += col[1];
+        bSum += col[2];
+    }
+    return [rSum / samples, gSum / samples, bSum / samples, 255];
+}
+
+function getRotations() {
+    const rx = parseFloat(rotXInput?.value || 0) * Math.PI / 180;
+    const ry = parseFloat(rotYInput?.value || 0) * Math.PI / 180;
+    const rz = parseFloat(rotZInput?.value || 0) * Math.PI / 180;
+    return { rx, ry, rz };
+}
+
+function rotateVector(x, y, z, rx, ry, rz) {
+    let y1 = y * Math.cos(rx) - z * Math.sin(rx);
+    let z1 = y * Math.sin(rx) + z * Math.cos(rx);
+    let x1 = x;
+
+    let x2 = x1 * Math.cos(ry) + z1 * Math.sin(ry);
+    let z2 = -x1 * Math.sin(ry) + z1 * Math.cos(ry);
+    let y2 = y1;
+
+    let x3 = x2 * Math.cos(rz) - y2 * Math.sin(rz);
+    let y3 = x2 * Math.sin(rz) + y2 * Math.cos(rz);
+    let z3 = z2;
+
+    return [x3, y3, z3];
+}
+
+function generateFaces(size, isFast = false) {
     const result = {};
+    const centerFillColor = getCenterRingColor(0.04);
+    const { rx, ry, rz } = getRotations();
 
     for (const face of FACES) {
         const buf = new Uint8ClampedArray(size * size * 4);
@@ -137,41 +300,56 @@ function generateFaces(size) {
                 const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
                 dx /= len; dy /= len; dz /= len;
 
+                [dx, dy, dz] = rotateVector(dx, dy, dz, rx, ry, rz);
+
                 const rXY = Math.sqrt(dx * dx + dy * dy);
-                
-                let u, v;
-                let blurAmount = 0;
+                let color;
 
-                if (rXY < 1e-6) {
-                    // Самый центр полюса
-                    u = 0.5;
-                    v = 0.5;
-                    blurAmount = 2.0;
-                } else {
-                    // Угол отклонения theta (от 0 на +Z до PI на -Z)
+                if (isFast) {
                     const theta = Math.atan2(rXY, dz);
-                    
-                    // Переводим полярный радиус в диапазоне 0..0.5
                     const r = (theta / Math.PI) * 0.5;
+                    const u = 0.5 + (rXY > 0 ? (dx / rXY) * r : 0);
+                    const v = 0.5 - (rXY > 0 ? (dy / rXY) * r : 0);
+                    color = sampleFast(u, v);
+                } else {
+                    const nodeDistance = Math.min(
+                        Math.sqrt(dx * dx + dy * dy + (dz - 1) * (dz - 1)),
+                        Math.sqrt(dx * dx + dy * dy + (dz + 1) * (dz + 1))
+                    );
 
-                    u = 0.5 + (dx / rXY) * r;
-                    v = 0.5 - (dy / rXY) * r; // Инвертируем Y для корректной сетки
+                    if (nodeDistance < 0.06) {
+                        const t = nodeDistance / 0.06;
+                        const theta = Math.atan2(rXY, dz);
+                        const r = (theta / Math.PI) * 0.5;
+                        const u = 0.5 + (rXY > 0 ? (dx / rXY) * r : 0);
+                        const v = 0.5 - (rXY > 0 ? (dy / rXY) * r : 0);
+                        const sampled = sampleMatcap(u, v, 3.0);
 
-                    // Если точка смотрит назад (dz < 0) или слишком близко к центру/краю — наращиваем размытие
-                    if (dz < 0) {
-                        blurAmount = Math.pow(Math.abs(dz), 1.5) * 4.0;
-                    } else if (rXY < 0.05) {
-                        blurAmount = (1 - rXY / 0.05) * 2.0;
+                        color = [
+                            centerFillColor[0] * (1 - t) + sampled[0] * t,
+                            centerFillColor[1] * (1 - t) + sampled[1] * t,
+                            centerFillColor[2] * (1 - t) + sampled[2] * t,
+                            255
+                        ];
+                    } else {
+                        const theta = Math.atan2(rXY, dz);
+                        const r = (theta / Math.PI) * 0.5;
+                        const u = 0.5 + (dx / rXY) * r;
+                        const v = 0.5 - (dy / rXY) * r;
+
+                        let blurAmount = 0;
+                        if (dz < 0) {
+                            blurAmount = Math.pow(Math.abs(dz), 1.2) * 3.5;
+                        }
+
+                        color = sampleMatcap(u, v, blurAmount);
                     }
                 }
 
-                // Выборка пикселя с адаптивным сглаживанием
-                const [r, g, bl] = sampleMatcap(u, v, blurAmount);
-
                 const off = (row * size + col) * 4;
-                buf[off] = r;
-                buf[off + 1] = g;
-                buf[off + 2] = bl;
+                buf[off] = color[0];
+                buf[off + 1] = color[1];
+                buf[off + 2] = color[2];
                 buf[off + 3] = 255;
             }
         }
@@ -198,8 +376,6 @@ function renderPreview(faces, size) {
         holder.appendChild(cell);
     }
 }
-
-// ---------- VTF pixel format packing ----------
 
 const VTF_FORMATS = {
     RGBA8888: 0,
@@ -310,8 +486,6 @@ function faceByteSize(size, format) {
     }
 }
 
-// ---------- VTF file assembly ----------
-
 function buildVTF(faces, size, flipRows, format) {
     const headerSize = 64;
     const faceBytes = faceByteSize(size, format);
@@ -324,9 +498,8 @@ function buildVTF(faces, size, flipRows, format) {
     const wU32 = v => { dv.setUint32(o, v, true); o += 4; };
     const wF32 = v => { dv.setFloat32(o, v, true); o += 4; };
 
-    // Исправлено: 0x56='V', 0x54='T', 0x46='F', 0x00='\0' (Сигнатура "VTF\0")
     wU8(0x56); wU8(0x54); wU8(0x46); wU8(0x00);
-    wU32(7); wU32(1);           // Version 7.1
+    wU32(7); wU32(1);
     wU32(headerSize);
     wU16(size); wU16(size);
     const ENVMAP = 0x00004000, NOMIP = 0x00000100, NOLOD = 0x00000200;
@@ -338,7 +511,7 @@ function buildVTF(faces, size, flipRows, format) {
     wF32(1.0);
     wU32(VTF_FORMATS[format]);
     wU8(1);
-    dv.setInt32(o, -1, true); o += 4; // Low-res thumb (none)
+    dv.setInt32(o, -1, true); o += 4;
     wU8(0); wU8(0);
     wU8(0);
 
@@ -358,7 +531,7 @@ function buildVTF(faces, size, flipRows, format) {
     };
 
     for (const face of FACES) writeFace(faces[face]);
-    writeFace(faces[FACES[0]]); // 7-я грань для совместимости cubemap vtf
+    writeFace(faces[FACES[0]]);
 
     return new Uint8Array(buf);
 }
@@ -489,20 +662,32 @@ function getFlipRows() {
     return checked ? checked.value === 'true' : false;
 }
 
-generateBtn.addEventListener('click', () => {
+function runGeneration(isFast = false) {
     if (!srcData) return;
-    statusEl.textContent = 'Generating faces...';
-    generateBtn.disabled = true;
-    setTimeout(() => {
-        const size = getFaceSize();
-        const faces = generateFaces(size);
-        generatedFaces = faces; generatedSize = size;
-        renderPreview(faces, size);
-        document.getElementById('vmtPreview').textContent = buildVMT(getMatPath());
-        statusEl.textContent = 'Done.';
-        generateBtn.disabled = false;
-    }, 20);
-});
+
+    if (isFast) {
+        statusEl.textContent = 'Fast Previewing...';
+        const renderSize = 128;
+        const faces = generateFaces(renderSize, true);
+        renderPreview(faces, renderSize);
+    } else {
+        statusEl.textContent = 'Generating high quality...';
+        generateBtn.disabled = true;
+
+        setTimeout(() => {
+            const targetSize = getFaceSize();
+            const faces = generateFaces(targetSize, false);
+            generatedFaces = faces;
+            generatedSize = targetSize;
+            renderPreview(faces, targetSize);
+            document.getElementById('vmtPreview').textContent = buildVMT(getMatPath());
+            statusEl.textContent = 'Done.';
+            generateBtn.disabled = false;
+        }, 10);
+    }
+}
+
+generateBtn.addEventListener('click', () => runGeneration(false));
 
 document.getElementById('dlVtf').addEventListener('click', () => {
     if (!generatedFaces) return;
