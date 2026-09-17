@@ -55,12 +55,13 @@
                 </div>
             </div>
 
-            <div class="row">
-                <div class="col-sm">
-                    <div id="settings-area">
+            <div class="row g-3">
+                <!-- Face Size -->
+                <div class="col-md-4">
+                    <div id="settings-area" class="p-3 border rounded bg-light h-100">
                         <h3>Face size</h3>
                         <fieldset title="Size of each of the 6 cubemap faces.">
-                            <div class="btn-group">
+                            <div class="btn-group w-100" role="group">
                                 <input class="btn-check" id="size-256" name="faceSize" type="radio" value="256">
                                 <label class="btn btn-outline-primary" for="size-256">256</label>
 
@@ -73,55 +74,62 @@
                         </fieldset>
                     </div>
                 </div>
-                <div class="col-sm">
-                    <div id="settings-area">
-                        <h3>Material path</h3>
-                        <div class="input-group mb-2 mr-sm-2">
-                            <div class="input-group-text">materials/</div>
-                            <input class="form-control" id="matPath" type="text" value="models/props/matcap_ball/matcap">
-                        </div>
+
+                <!-- Compression / Format -->
+                <div class="col-md-4">
+                    <div id="settings-area" class="p-3 border rounded bg-light h-100">
+                        <h3>Compression</h3>
+                        <fieldset title="VTF pixel compression format.">
+                            <div class="btn-group w-100" role="group">
+                                <input checked class="btn-check" id="fmt-dxt1" name="pixelFormat" type="radio" value="DXT1">
+                                <label class="btn btn-outline-primary" for="fmt-dxt1">DXT1</label>
+
+                                <input class="btn-check" id="fmt-bgr888" name="pixelFormat" type="radio" value="BGR888">
+                                <label class="btn btn-outline-primary" for="fmt-bgr888">BGR888</label>
+                            </div>
+                        </fieldset>
                     </div>
                 </div>
-                <div class="col-sm">
-                    <div id="settings-area">
-                        <h3>VTF options</h3>
-                        <div class="mb-2 text-start">
-                            <label for="pixelFormat" class="form-label mb-1" style="font-size:13px;">Pixel format</label>
-                            <select class="form-select form-select-sm" id="pixelFormat">
-                                <option value="RGBA8888" selected>RGBA8888 (без сжатия)</option>
-                                <option value="BGRA8888">BGRA8888 (без сжатия)</option>
-                                <option value="BGR888">BGR888 (без альфы, без сжатия)</option>
-                                <option value="DXT1">DXT1 (сжатый, ~в 8 раз меньше)</option>
-                            </select>
-                        </div>
-                        <div class="form-check text-start">
-                            <input class="form-check-input" type="checkbox" id="flipRows">
-                            <label class="form-check-label" for="flipRows">
-                                Flip rows (if upside down in VTFEdit)
-                            </label>
-                        </div>
+
+                <!-- Orientation / Flip -->
+                <div class="col-md-4">
+                    <div id="settings-area" class="p-3 border rounded bg-light h-100">
+                        <h3>Orientation</h3>
+                        <fieldset title="Vertical row flipping options.">
+                            <div class="btn-group w-100" role="group">
+                                <input checked class="btn-check" id="flip-none" name="flipRows" type="radio" value="false">
+                                <label class="btn btn-outline-primary" for="flip-none">Normal</label>
+
+                                <input class="btn-check" id="flip-vertical" name="flipRows" type="radio" value="true">
+                                <label class="btn btn-outline-primary" for="flip-vertical">Flip rows</label>
+                            </div>
+                        </fieldset>
                     </div>
                 </div>
             </div>
+
+            <br>
 
             <div id="drop-area">
                 <button class="btn btn-primary btn-lg" id="generateBtn" disabled>Generate</button>
                 <p id="status" class="mt-2 mb-0 note-text"></p>
-            </div>
+            
 
-            <div id="resultArea" class="drop-area2" style="display:none">
-                <h3>Cubemap faces</h3>
-                <output id="facesOutput"></output>
+                <div id="resultArea" class="drop-area2" style="display:none">
+                    <h3>Cubemap faces</h3>
+                    <output id="facesOutput"></output>
 
-                <div class="d-flex gap-2 justify-content-center flex-wrap mt-3 mb-3">
-                    <button class="btn btn-success" id="dlVtf">Download .vtf</button>
-                    <button class="btn btn-outline-secondary" id="dlVmt">Download .vmt</button>
-                    <button class="btn btn-outline-secondary" id="dlPngZip">Download 6 faces (.zip)</button>
+                    <div class="d-flex gap-2 justify-content-center flex-wrap mt-3 mb-3">
+                        <button class="btn btn-success" id="dlVtf">Download .vtf</button>
+                        <button class="btn btn-outline-secondary" id="dlVmt">Download .vmt</button>
+                        <button class="btn btn-outline-secondary" id="dlPngZip">Download 6 faces (.zip)</button>
+                    </div>
+
+                    <h3>.vmt</h3>
+                    <pre id="vmtPreview"></pre>
+                    <p class="note-text">Check the .vtf in VTFEdit before using it in-game.</p>
                 </div>
 
-                <h3>.vmt</h3>
-                <pre id="vmtPreview"></pre>
-                <p class="note-text">Check the .vtf in VTFEdit before using it in-game.</p>
             </div>
         </div>
 

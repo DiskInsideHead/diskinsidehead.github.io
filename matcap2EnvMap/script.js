@@ -2,13 +2,17 @@ let srcData = null, srcW = 0, srcH = 0;
 let generatedFaces = null, generatedSize = 0;
 
 const imageInput = document.getElementById('imageInput');
+const dropArea = document.getElementById('drop-area');
 const generateBtn = document.getElementById('generateBtn');
 const statusEl = document.getElementById('status');
 const resultArea = document.getElementById('resultArea');
 
-imageInput.addEventListener('change', () => {
-    const f = imageInput.files[0];
-    if (!f) return;
+// ---------- Функция загрузки и обработки изображения ----------
+function handleFile(file) {
+    if (!file || !file.type.startsWith('image/')) {
+        statusEl.textContent = 'Error: Please upload a valid image file.';
+        return;
+    }
     const img = new Image();
     img.onload = () => {
         const c = document.createElement('canvas');
@@ -18,10 +22,48 @@ imageInput.addEventListener('change', () => {
         const id = ctx.getImageData(0, 0, img.width, img.height);
         srcData = id.data; srcW = img.width; srcH = img.height;
         generateBtn.disabled = false;
-        statusEl.textContent = `Loaded: ${img.width}×${img.height}`;
+        statusEl.textContent = `Loaded: ${file.name} (${img.width}×${img.height})`;
     };
-    img.src = URL.createObjectURL(f);
+    img.src = URL.createObjectURL(file);
+}
+
+// Загрузка через обычный инпут
+imageInput.addEventListener('change', () => {
+    if (imageInput.files && imageInput.files[0]) {
+        handleFile(imageInput.files[0]);
+    }
 });
+
+// ---------- Drag & Drop поддержка ----------
+
+// Отменяем стандартное поведение браузера (открытие файла вместо загрузки)
+['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+    document.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    }, false);
+});
+
+// Эффект подсвечивания при наведении на зону загрузки
+if (dropArea) {
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropArea.addEventListener(eventName, () => dropArea.classList.add('drag-active'), false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropArea.addEventListener(eventName, () => dropArea.classList.remove('drag-active'), false);
+    });
+}
+
+// Обработка сброса файла (drop) в любое место страницы
+document.addEventListener('drop', (e) => {
+    const dt = e.dataTransfer;
+    if (dt && dt.files && dt.files.length > 0) {
+        handleFile(dt.files[0]);
+    }
+});
+
+// ---------- Генерация кубмапы ----------
 
 function bilinear(u, v) {
     u = Math.min(Math.max(u, 0), 1);
@@ -123,8 +165,6 @@ function packBGR888(src) {
     return out;
 }
 
-// Minimal DXT1 (BC1, opaque) encoder: per 4x4 block picks min/max RGB as the
-// two 565 endpoints, no cluster-fit optimization. Good enough for matcap reflections.
 function rgb565(r, g, b) {
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 }
@@ -150,14 +190,14 @@ function encodeDXT1Block(src, size, bx, by) {
     let c0 = rgb565(maxR, maxG, maxB);
     let c1 = rgb565(minR, minG, minB);
     if (c0 === c1) { if (c0 > 0) c1 = c0 - 1; else c0 = c1 + 1; }
-    if (c0 < c1) { const t = c0; c0 = c1; c1 = t; } // opaque mode needs c0 > c1
+    if (c0 < c1) { const t = c0; c0 = c1; c1 = t; }
 
     const [r0, g0, b0] = unpack565(c0);
     const [r1, g1, b1] = unpack565(c1);
     const palette = [
         [r0, g0, b0],
         [r1, g1, b1],
-        [(2 * r0 + r1) / 3, (2 * g0 + g1) / 3, (2 * b0 + b1) / 3],
+        [(2 * r0 + r1) / 3, (2 * g0 + g1) / 3, (b0 + 2 * b1) / 3],
         [(r0 + 2 * r1) / 3, (g0 + 2 * g1) / 3, (b0 + 2 * b1) / 3],
     ];
 
@@ -198,7 +238,7 @@ function packFace(rgba, size, format) {
         case 'BGRA8888': return packBGRA8888(rgba);
         case 'BGR888': return packBGR888(rgba);
         case 'DXT1': return packDXT1(rgba, size);
-        default: return rgba; // RGBA8888
+        default: return rgba;
     }
 }
 function faceByteSize(size, format) {
@@ -206,7 +246,7 @@ function faceByteSize(size, format) {
         case 'BGRA8888': return size * size * 4;
         case 'BGR888': return size * size * 3;
         case 'DXT1': return (size / 4) * (size / 4) * 8;
-        default: return size * size * 4; // RGBA8888
+        default: return size * size * 4;
     }
 }
 
@@ -215,9 +255,6 @@ function faceByteSize(size, format) {
 function buildVTF(faces, size, flipRows, format) {
     const headerSize = 64;
     const faceBytes = faceByteSize(size, format);
-    // VTF v7.1–7.4 cubemap обязан содержать 7 граней: 6 настоящих
-    // + 7-я легаси "spheremap" (движком не используется, но без неё
-    // размер файла не совпадает с тем, что ждёт заголовок — файл не открывается)
     const totalSize = headerSize + faceBytes * 7;
     const buf = new ArrayBuffer(totalSize);
     const dv = new DataView(buf);
@@ -227,8 +264,8 @@ function buildVTF(faces, size, flipRows, format) {
     const wU32 = v => { dv.setUint32(o, v, true); o += 4; };
     const wF32 = v => { dv.setFloat32(o, v, true); o += 4; };
 
-    wU8(0x56); wU8(0x54); wU8(0x46); wU8(0x00); // "VTF\0"
-    wU32(7); wU32(1);           // version 7.1
+    wU8(0x56); wU8(0x46); wU8(0x54); wU8(0x00);
+    wU32(7); wU32(1);
     wU32(headerSize);
     wU16(size); wU16(size);
     const ENVMAP = 0x00004000, NOMIP = 0x00000100, NOLOD = 0x00000200;
@@ -240,7 +277,7 @@ function buildVTF(faces, size, flipRows, format) {
     wF32(1.0);
     wU32(VTF_FORMATS[format]);
     wU8(1);
-    dv.setInt32(o, -1, true); o += 4; // no low-res thumb
+    dv.setInt32(o, -1, true); o += 4;
     wU8(0); wU8(0);
     wU8(0);
 
@@ -260,10 +297,14 @@ function buildVTF(faces, size, flipRows, format) {
     };
 
     for (const face of FACES) writeFace(faces[face]);
-    // 7-я грань (spheremap-заглушка): дублируем первую — движком не используется
     writeFace(faces[FACES[0]]);
 
     return new Uint8Array(buf);
+}
+
+function getMatPath() {
+    const matInput = document.getElementById('matPath');
+    return matInput ? matInput.value.trim() : 'material';
 }
 
 function buildVMT(matPath) {
@@ -276,15 +317,6 @@ function buildVMT(matPath) {
     "$envmapfresnel" 0
     "$nofog"         0
 }
-
-// Alternative for a regular prop with a texture + a bit of reflection:
-// "VertexLitGeneric"
-// {
-//     "$basetexture"   "${matPath}_base"
-//     "$envmap"        "${envName}"
-//     "$envmaptint"    "[0.6 0.6 0.6]"
-//     "$phong"         0
-// }
 `;
 }
 
@@ -382,7 +414,18 @@ function download(data, filename, mime) {
 }
 
 function getFaceSize() {
-    return parseInt(document.querySelector('input[name="faceSize"]:checked').value, 10);
+    const checked = document.querySelector('input[name="faceSize"]:checked');
+    return checked ? parseInt(checked.value, 10) : 512;
+}
+
+function getPixelFormat() {
+    const checked = document.querySelector('input[name="pixelFormat"]:checked');
+    return checked ? checked.value : 'DXT1';
+}
+
+function getFlipRows() {
+    const checked = document.querySelector('input[name="flipRows"]:checked');
+    return checked ? checked.value === 'true' : false;
 }
 
 generateBtn.addEventListener('click', () => {
@@ -394,7 +437,7 @@ generateBtn.addEventListener('click', () => {
         const faces = generateFaces(size);
         generatedFaces = faces; generatedSize = size;
         renderPreview(faces, size);
-        document.getElementById('vmtPreview').textContent = buildVMT(document.getElementById('matPath').value.trim());
+        document.getElementById('vmtPreview').textContent = buildVMT(getMatPath());
         statusEl.textContent = 'Done.';
         generateBtn.disabled = false;
     }, 20);
@@ -402,16 +445,16 @@ generateBtn.addEventListener('click', () => {
 
 document.getElementById('dlVtf').addEventListener('click', () => {
     if (!generatedFaces) return;
-    const flip = document.getElementById('flipRows').checked;
-    const format = document.getElementById('pixelFormat').value;
+    const flip = getFlipRows();
+    const format = getPixelFormat();
     const vtf = buildVTF(generatedFaces, generatedSize, flip, format);
-    const matPath = document.getElementById('matPath').value.trim();
+    const matPath = getMatPath();
     const name = matPath.split('/').pop() + '_env.vtf';
     download(vtf, name, 'application/octet-stream');
 });
 
 document.getElementById('dlVmt').addEventListener('click', () => {
-    const matPath = document.getElementById('matPath').value.trim();
+    const matPath = getMatPath();
     const vmt = buildVMT(matPath);
     const name = matPath.split('/').pop() + '.vmt';
     download(new TextEncoder().encode(vmt), name, 'text/plain');
