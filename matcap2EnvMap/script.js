@@ -7,7 +7,6 @@ let isSliderInteracting = false;
 const imageInput = document.getElementById('imageInput');
 const dropArea = document.getElementById('drop-area');
 const generateBtn = document.getElementById('generateBtn');
-const statusEl = document.getElementById('status');
 const resultArea = document.getElementById('resultArea');
 
 const rotXInput = document.getElementById('rotX');
@@ -16,9 +15,30 @@ const rotZInput = document.getElementById('rotZ');
 const ballController = document.getElementById('ballController');
 const ballHandle = document.getElementById('ballHandle');
 
+function showStatus(text, duration = 3000) {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = 'toast show align-items-center text-bg-dark border-0 mb-2 shadow-sm';
+    toast.role = 'alert';
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body py-2 px-3">${text}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    container.appendChild(toast);
+    if (duration > 0) {
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, duration);
+    }
+}
+
 function handleFile(file) {
     if (!file || !file.type.startsWith('image/')) {
-        statusEl.textContent = 'Error: Please upload a valid image file.';
+        showStatus('Error: Please upload a valid image file.');
         return;
     }
     const img = new Image();
@@ -30,16 +50,14 @@ function handleFile(file) {
         const id = ctx.getImageData(0, 0, img.width, img.height);
         srcData = id.data; srcW = img.width; srcH = img.height;
         generateBtn.disabled = false;
-        statusEl.textContent = `Loaded: ${file.name} (${img.width}×${img.height})`;
+        showStatus(`Loaded: ${file.name} (${img.width}×${img.height})`);
         runGeneration(false);
     };
     img.src = URL.createObjectURL(file);
 }
 
 imageInput.addEventListener('change', () => {
-    if (imageInput.files && imageInput.files[0]) {
-        handleFile(imageInput.files[0]);
-    }
+    if (imageInput.files && imageInput.files[0]) handleFile(imageInput.files[0]);
 });
 
 ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -53,7 +71,6 @@ if (dropArea) {
     ['dragenter', 'dragover'].forEach(eventName => {
         dropArea.addEventListener(eventName, () => dropArea.classList.add('drag-active'), false);
     });
-
     ['dragleave', 'drop'].forEach(eventName => {
         dropArea.addEventListener(eventName, () => dropArea.classList.remove('drag-active'), false);
     });
@@ -61,54 +78,41 @@ if (dropArea) {
 
 document.addEventListener('drop', (e) => {
     const dt = e.dataTransfer;
-    if (dt && dt.files && dt.files.length > 0) {
-        handleFile(dt.files[0]);
-    }
+    if (dt && dt.files && dt.files.length > 0) handleFile(dt.files[0]);
 });
 
 function updateHandlePosition(pitchDeg, yawDeg) {
     if (!ballController || !ballHandle) return;
     const rect = ballController.getBoundingClientRect();
     const radius = rect.width / 2;
-
     const normX = (yawDeg / 180); 
     const normY = (-pitchDeg / 180);
-
     const handleX = radius + normX * (radius - 6);
     const handleY = radius + normY * (radius - 6);
-
     ballHandle.style.left = `${handleX}px`;
     ballHandle.style.top = `${handleY}px`;
 }
 
 function handleBallMove(e) {
     if (!isBallInteracting || !ballController) return;
-
     const rect = ballController.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
-
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-
     let dx = (clientX - cx) / (rect.width / 2);
     let dy = (clientY - cy) / (rect.height / 2);
-
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist > 1) {
         dx /= dist;
         dy /= dist;
     }
-
     const yaw = Math.round(dx * 180);
     const pitch = Math.round(-dy * 180);
-
     rotYInput.value = yaw;
     rotXInput.value = pitch;
-
     document.getElementById('rotYVal').textContent = yaw;
     document.getElementById('rotXVal').textContent = pitch;
-
     updateHandlePosition(pitch, yaw);
     scheduleRender();
 }
@@ -118,24 +122,16 @@ if (ballController) {
         isBallInteracting = true;
         handleBallMove(e);
     };
-
     ballController.addEventListener('mousedown', startBallDrag);
     ballController.addEventListener('touchstart', startBallDrag);
-
-    window.addEventListener('mousemove', (e) => {
-        if (isBallInteracting) handleBallMove(e);
-    });
-    window.addEventListener('touchmove', (e) => {
-        if (isBallInteracting) handleBallMove(e);
-    });
-
+    window.addEventListener('mousemove', (e) => { if (isBallInteracting) handleBallMove(e); });
+    window.addEventListener('touchmove', (e) => { if (isBallInteracting) handleBallMove(e); });
     const stopBallDrag = () => {
         if (isBallInteracting) {
             isBallInteracting = false;
             scheduleRender(true);
         }
     };
-
     window.addEventListener('mouseup', stopBallDrag);
     window.addEventListener('touchend', stopBallDrag);
 }
@@ -146,7 +142,6 @@ if (ballController) {
     if (input && valSpan) {
         input.addEventListener('mousedown', () => { isSliderInteracting = true; });
         input.addEventListener('touchstart', () => { isSliderInteracting = true; });
-        
         input.addEventListener('input', () => {
             valSpan.textContent = input.value;
             if (id === 'rotX' || id === 'rotY') {
@@ -154,7 +149,6 @@ if (ballController) {
             }
             scheduleRender();
         });
-
         const stopSliderInput = () => {
             if (isSliderInteracting) {
                 isSliderInteracting = false;
@@ -167,16 +161,86 @@ if (ballController) {
     }
 });
 
+const resetRotationBtn = document.getElementById('resetRotation');
+if (resetRotationBtn) {
+    resetRotationBtn.addEventListener('click', () => {
+        rotXInput.value = 0;
+        rotYInput.value = 0;
+        rotZInput.value = 0;
+        document.getElementById('rotXVal').textContent = 0;
+        document.getElementById('rotYVal').textContent = 0;
+        document.getElementById('rotZVal').textContent = 0;
+        updateHandlePosition(0, 0);
+        scheduleRender(true);
+    });
+}
+
+const backBlurStrengthInput = document.getElementById('backBlurStrength');
+if (backBlurStrengthInput) {
+    const valSpan = document.getElementById('backBlurStrengthVal');
+    backBlurStrengthInput.addEventListener('mousedown', () => { isSliderInteracting = true; });
+    backBlurStrengthInput.addEventListener('touchstart', () => { isSliderInteracting = true; });
+    backBlurStrengthInput.addEventListener('input', () => {
+        if (valSpan) valSpan.textContent = parseFloat(backBlurStrengthInput.value).toFixed(1);
+        scheduleRender();
+    });
+    const stopBackBlurInput = () => {
+        if (isSliderInteracting) {
+            isSliderInteracting = false;
+            scheduleRender(true);
+        }
+    };
+    backBlurStrengthInput.addEventListener('mouseup', stopBackBlurInput);
+    backBlurStrengthInput.addEventListener('touchend', stopBackBlurInput);
+    backBlurStrengthInput.addEventListener('change', stopBackBlurInput);
+}
+
+document.querySelectorAll('input[name="backFill"]').forEach(input => {
+    input.addEventListener('change', () => scheduleRender(true));
+});
+
+function getBackFillMode() {
+    const checked = document.querySelector('input[name="backFill"]:checked');
+    return checked ? checked.value : 'blur';
+}
+
+function getBackBlurStrength() {
+    return backBlurStrengthInput ? parseFloat(backBlurStrengthInput.value) : 1.0;
+}
+
+const globalSoftnessInput = document.getElementById('globalSoftness');
+if (globalSoftnessInput) {
+    const valSpan = document.getElementById('globalSoftnessVal');
+    globalSoftnessInput.addEventListener('mousedown', () => { isSliderInteracting = true; });
+    globalSoftnessInput.addEventListener('touchstart', () => { isSliderInteracting = true; });
+    globalSoftnessInput.addEventListener('input', () => {
+        if (valSpan) valSpan.textContent = globalSoftnessInput.value;
+        scheduleRender();
+    });
+    const stopGlobalSoftnessInput = () => {
+        if (isSliderInteracting) {
+            isSliderInteracting = false;
+            scheduleRender(true);
+        }
+    };
+    globalSoftnessInput.addEventListener('mouseup', stopGlobalSoftnessInput);
+    globalSoftnessInput.addEventListener('touchend', stopGlobalSoftnessInput);
+    globalSoftnessInput.addEventListener('change', stopGlobalSoftnessInput);
+}
+
+function getGlobalSoftness() {
+    return globalSoftnessInput ? parseFloat(globalSoftnessInput.value) / 100 : 0;
+}
+
 function scheduleRender(forceFinal = false) {
     if (!srcData) return;
     if (renderTimeout) clearTimeout(renderTimeout);
 
     const isInteracting = isBallInteracting || isSliderInteracting;
-
     if (isInteracting && !forceFinal) {
         runGeneration(true);
     } else {
-        statusEl.textContent = 'Rendering high quality...';
+        showStatus('Rendering high quality...', 1000);
         renderTimeout = setTimeout(() => {
             runGeneration(false);
         }, 250);
@@ -221,42 +285,119 @@ function faceDir(face, a, b) {
     }
 }
 
-function sampleMatcap(u, v, blurRadius = 0) {
+function sampleMatcap(u, v) {
+    return bilinear(u, v);
+}
+
+function buildDiscClampedSource() {
+    const out = new Uint8ClampedArray(srcW * srcH * 4);
+    const cx = (srcW - 1) / 2, cy = (srcH - 1) / 2;
+    const R = Math.min(cx, cy);
+    for (let y = 0; y < srcH; y++) {
+        const ny = (y - cy) / R;
+        for (let x = 0; x < srcW; x++) {
+            const nx = (x - cx) / R;
+            const r = Math.sqrt(nx * nx + ny * ny);
+            let sx = x, sy = y;
+            if (r > 0.995) {
+                const k = 0.995 / r;
+                sx = cx + nx * k * R;
+                sy = cy + ny * k * R;
+            }
+            const c = bilinear(sx / (srcW - 1), sy / (srcH - 1));
+            const off = (y * srcW + x) * 4;
+            out[off] = c[0]; out[off + 1] = c[1]; out[off + 2] = c[2]; out[off + 3] = 255;
+        }
+    }
+    return out;
+}
+
+function buildMipPyramid(baseData, baseW, baseH) {
+    const levels = [{ data: baseData, w: baseW, h: baseH }];
+    let w = baseW, h = baseH, data = baseData;
+    while (w > 4 && h > 4 && levels.length < 8) {
+        const nw = Math.max(1, w >> 1), nh = Math.max(1, h >> 1);
+        const nd = new Uint8ClampedArray(nw * nh * 4);
+        for (let y = 0; y < nh; y++) {
+            const y0 = Math.min(y * 2, h - 1), y1 = Math.min(y * 2 + 1, h - 1);
+            for (let x = 0; x < nw; x++) {
+                const x0 = Math.min(x * 2, w - 1), x1 = Math.min(x * 2 + 1, w - 1);
+                for (let ch = 0; ch < 3; ch++) {
+                    const s = data[(y0 * w + x0) * 4 + ch] + data[(y0 * w + x1) * 4 + ch] +
+                              data[(y1 * w + x0) * 4 + ch] + data[(y1 * w + x1) * 4 + ch];
+                    nd[(y * nw + x) * 4 + ch] = s / 4;
+                }
+                nd[(y * nw + x) * 4 + 3] = 255;
+            }
+        }
+        levels.push({ data: nd, w: nw, h: nh });
+        w = nw; h = nh; data = nd;
+    }
+    return levels;
+}
+
+function bilinearLevel(level, u, v) {
     u = Math.min(Math.max(u, 0), 1);
     v = Math.min(Math.max(v, 0), 1);
-
-    if (blurRadius <= 0) {
-        return bilinear(u, v);
+    const { data, w, h } = level;
+    const x = u * (w - 1), y = v * (h - 1);
+    const x0 = Math.floor(x), x1 = Math.min(x0 + 1, w - 1);
+    const y0 = Math.floor(y), y1 = Math.min(y0 + 1, h - 1);
+    const fx = x - x0, fy = y - y0;
+    const idx = (xx, yy) => (yy * w + xx) * 4;
+    const out = [0, 0, 0, 255];
+    for (let ch = 0; ch < 3; ch++) {
+        const c00 = data[idx(x0, y0) + ch], c10 = data[idx(x1, y0) + ch];
+        const c01 = data[idx(x0, y1) + ch], c11 = data[idx(x1, y1) + ch];
+        const top = c00 * (1 - fx) + c10 * fx;
+        const bot = c01 * (1 - fx) + c11 * fx;
+        out[ch] = top * (1 - fy) + bot * fy;
     }
+    return out;
+}
 
-    const step = blurRadius / srcW;
-    const p0 = bilinear(u, v);
-    const p1 = bilinear(u + step, v);
-    const p2 = bilinear(u - step, v);
-    const p3 = bilinear(u, v + step);
-    const p4 = bilinear(u, v - step);
-
+function sampleMipTrilinear(pyramid, u, v, levelFloat) {
+    const maxLevel = pyramid.length - 1;
+    levelFloat = Math.min(Math.max(levelFloat, 0), maxLevel);
+    const l0 = Math.floor(levelFloat), l1 = Math.min(l0 + 1, maxLevel);
+    const t = levelFloat - l0;
+    const c0 = bilinearLevel(pyramid[l0], u, v);
+    const c1 = bilinearLevel(pyramid[l1], u, v);
     return [
-        (p0[0] + p1[0] + p2[0] + p3[0] + p4[0]) / 5,
-        (p0[1] + p1[1] + p2[1] + p3[1] + p4[1]) / 5,
-        (p0[2] + p1[2] + p2[2] + p3[2] + p4[2]) / 5,
+        c0[0] * (1 - t) + c1[0] * t,
+        c0[1] * (1 - t) + c1[1] * t,
+        c0[2] * (1 - t) + c1[2] * t,
         255
     ];
 }
 
-function getCenterRingColor(ringRadiusUV = 0.04) {
-    let rSum = 0, gSum = 0, bSum = 0;
-    const samples = 8;
-    for (let i = 0; i < samples; i++) {
-        const angle = (i / samples) * Math.PI * 2;
-        const u = 0.5 + Math.cos(angle) * ringRadiusUV;
-        const v = 0.5 + Math.sin(angle) * ringRadiusUV;
-        const col = sampleFast(u, v);
-        rSum += col[0];
-        gSum += col[1];
-        bSum += col[2];
+function buildBackFiller() {
+    const clamped = buildDiscClampedSource();
+    const pyramid = buildMipPyramid(clamped, srcW, srcH);
+    pyramid[0] = { data: srcData, w: srcW, h: srcH };
+    const flatColor = bilinearLevel(pyramid[pyramid.length - 1], 0.5, 0.5);
+    return { pyramid, flatColor };
+}
+
+function smoothstep01(t) {
+    t = Math.min(Math.max(t, 0), 1);
+    return t * t * (3 - 2 * t);
+}
+
+function sampleBackHemisphere(filler, u, v, dz, mode, strength) {
+    const t = smoothstep01(-dz * strength);
+    if (mode === 'flat') {
+        const sharp = bilinearLevel(filler.pyramid[0], u, v);
+        return [
+            sharp[0] * (1 - t) + filler.flatColor[0] * t,
+            sharp[1] * (1 - t) + filler.flatColor[1] * t,
+            sharp[2] * (1 - t) + filler.flatColor[2] * t,
+            255
+        ];
     }
-    return [rSum / samples, gSum / samples, bSum / samples, 255];
+    const maxLevel = filler.pyramid.length - 1;
+    const levelFloat = Math.pow(t, 1.3) * maxLevel;
+    return sampleMipTrilinear(filler.pyramid, u, v, levelFloat);
 }
 
 function getRotations() {
@@ -284,8 +425,11 @@ function rotateVector(x, y, z, rx, ry, rz) {
 
 function generateFaces(size, isFast = false) {
     const result = {};
-    const centerFillColor = getCenterRingColor(0.04);
     const { rx, ry, rz } = getRotations();
+    const backFillMode = isFast ? 'blur' : getBackFillMode();
+    const backStrength = isFast ? 1.0 : getBackBlurStrength();
+    const backFiller = isFast ? null : buildBackFiller();
+    const globalSoftness = isFast ? 0 : getGlobalSoftness();
 
     for (const face of FACES) {
         const buf = new Uint8ClampedArray(size * size * 4);
@@ -302,48 +446,41 @@ function generateFaces(size, isFast = false) {
 
                 [dx, dy, dz] = rotateVector(dx, dy, dz, rx, ry, rz);
 
-                const rXY = Math.sqrt(dx * dx + dy * dy);
+                const u = 0.5 + dx * 0.5;
+                const v = 0.5 - dy * 0.5;
                 let color;
 
                 if (isFast) {
-                    const theta = Math.atan2(rXY, dz);
-                    const r = (theta / Math.PI) * 0.5;
-                    const u = 0.5 + (rXY > 0 ? (dx / rXY) * r : 0);
-                    const v = 0.5 - (rXY > 0 ? (dy / rXY) * r : 0);
                     color = sampleFast(u, v);
+                } else if (dz < 0) {
+                    color = sampleBackHemisphere(backFiller, u, v, dz, backFillMode, backStrength);
                 } else {
-                    const nodeDistance = Math.min(
-                        Math.sqrt(dx * dx + dy * dy + (dz - 1) * (dz - 1)),
-                        Math.sqrt(dx * dx + dy * dy + (dz + 1) * (dz + 1))
-                    );
+                    color = sampleMatcap(u, v);
+                }
 
-                    if (nodeDistance < 0.06) {
-                        const t = nodeDistance / 0.06;
-                        const theta = Math.atan2(rXY, dz);
-                        const r = (theta / Math.PI) * 0.5;
-                        const u = 0.5 + (rXY > 0 ? (dx / rXY) * r : 0);
-                        const v = 0.5 - (rXY > 0 ? (dy / rXY) * r : 0);
-                        const sampled = sampleMatcap(u, v, 3.0);
-
+                if (!isFast) {
+                    const SEAM_HALF_WIDTH = 0.16;
+                    const seamT = 1 - smoothstep01(Math.abs(dz) / SEAM_HALF_WIDTH);
+                    if (seamT > 0) {
+                        const seamSample = sampleMipTrilinear(backFiller.pyramid, u, v, 3.0);
                         color = [
-                            centerFillColor[0] * (1 - t) + sampled[0] * t,
-                            centerFillColor[1] * (1 - t) + sampled[1] * t,
-                            centerFillColor[2] * (1 - t) + sampled[2] * t,
+                            color[0] * (1 - seamT) + seamSample[0] * seamT,
+                            color[1] * (1 - seamT) + seamSample[1] * seamT,
+                            color[2] * (1 - seamT) + seamSample[2] * seamT,
                             255
                         ];
-                    } else {
-                        const theta = Math.atan2(rXY, dz);
-                        const r = (theta / Math.PI) * 0.5;
-                        const u = 0.5 + (dx / rXY) * r;
-                        const v = 0.5 - (dy / rXY) * r;
-
-                        let blurAmount = 0;
-                        if (dz < 0) {
-                            blurAmount = Math.pow(Math.abs(dz), 1.2) * 3.5;
-                        }
-
-                        color = sampleMatcap(u, v, blurAmount);
                     }
+                }
+
+                if (!isFast && globalSoftness > 0) {
+                    const maxLevel = backFiller.pyramid.length - 1;
+                    const soft = sampleMipTrilinear(backFiller.pyramid, u, v, globalSoftness * maxLevel);
+                    color = [
+                        color[0] * (1 - globalSoftness) + soft[0] * globalSoftness,
+                        color[1] * (1 - globalSoftness) + soft[1] * globalSoftness,
+                        color[2] * (1 - globalSoftness) + soft[2] * globalSoftness,
+                        255
+                    ];
                 }
 
                 const off = (row * size + col) * 4;
@@ -362,9 +499,12 @@ function renderPreview(faces, size) {
     const holder = document.getElementById('facesOutput');
     holder.innerHTML = '';
     resultArea.style.display = 'block';
+    const placeholder = document.getElementById('mainPlaceholder');
+    if (placeholder) placeholder.style.display = 'none';
     for (const face of FACES) {
         const cell = document.createElement('div');
         cell.className = 'face-cell';
+        cell.dataset.face = face;
         const canvas = document.createElement('canvas');
         canvas.width = size; canvas.height = size;
         const ctx = canvas.getContext('2d');
@@ -404,10 +544,12 @@ function packBGR888(src) {
 function rgb565(r, g, b) {
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 }
+
 function unpack565(c) {
     const r5 = (c >> 11) & 0x1f, g6 = (c >> 5) & 0x3f, b5 = c & 0x1f;
     return [(r5 << 3) | (r5 >> 2), (g6 << 2) | (g6 >> 4), (b5 << 3) | (b5 >> 2)];
 }
+
 function encodeDXT1Block(src, size, bx, by) {
     let minR = 255, minG = 255, minB = 255, maxR = 0, maxG = 0, maxB = 0;
     const pixels = new Array(16);
@@ -450,6 +592,7 @@ function encodeDXT1Block(src, size, bx, by) {
     }
     return { c0, c1, indices };
 }
+
 function packDXT1(src, size) {
     const blocksPerSide = size / 4;
     const out = new Uint8Array(blocksPerSide * blocksPerSide * 8);
@@ -477,6 +620,7 @@ function packFace(rgba, size, format) {
         default: return rgba;
     }
 }
+
 function faceByteSize(size, format) {
     switch (format) {
         case 'BGRA8888': return size * size * 4;
@@ -539,19 +683,6 @@ function buildVTF(faces, size, flipRows, format) {
 function getMatPath() {
     const matInput = document.getElementById('matPath');
     return matInput ? matInput.value.trim() : 'material';
-}
-
-function buildVMT(matPath) {
-    const envName = matPath + '_env';
-    return `"UnlitGeneric"
-{
-    // matcap look: reflection only, no base texture
-    "$envmap"        "${envName}"
-    "$envmaptint"    "[1 1 1]"
-    "$envmapfresnel" 0
-    "$nofog"         0
-}
-`;
 }
 
 function crc32(buf) {
@@ -666,12 +797,12 @@ function runGeneration(isFast = false) {
     if (!srcData) return;
 
     if (isFast) {
-        statusEl.textContent = 'Fast Previewing...';
+        //showStatus('Fast Previewing...', 1000);
         const renderSize = 128;
         const faces = generateFaces(renderSize, true);
         renderPreview(faces, renderSize);
     } else {
-        statusEl.textContent = 'Generating high quality...';
+        showStatus('Generating high quality...');
         generateBtn.disabled = true;
 
         setTimeout(() => {
@@ -680,8 +811,7 @@ function runGeneration(isFast = false) {
             generatedFaces = faces;
             generatedSize = targetSize;
             renderPreview(faces, targetSize);
-            document.getElementById('vmtPreview').textContent = buildVMT(getMatPath());
-            statusEl.textContent = 'Done.';
+            showStatus('Done!');
             generateBtn.disabled = false;
         }, 10);
     }
@@ -697,13 +827,6 @@ document.getElementById('dlVtf').addEventListener('click', () => {
     const matPath = getMatPath();
     const name = matPath.split('/').pop() + '_env.vtf';
     download(vtf, name, 'application/octet-stream');
-});
-
-document.getElementById('dlVmt').addEventListener('click', () => {
-    const matPath = getMatPath();
-    const vmt = buildVMT(matPath);
-    const name = matPath.split('/').pop() + '.vmt';
-    download(new TextEncoder().encode(vmt), name, 'text/plain');
 });
 
 document.getElementById('dlPngZip').addEventListener('click', () => {

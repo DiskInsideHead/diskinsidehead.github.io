@@ -9,15 +9,108 @@
         <link href="../styles/foundation-icons.css" rel="stylesheet">
         <title>DIH - Matcap to EnvMap</title>
         <style>
+            html, body {
+                height: 100%;
+                overflow: hidden;
+            }
+            body {
+                margin: 0;
+            }
+            .app-shell {
+                display: flex;
+                align-items: stretch;
+                height: 100vh;
+            }
+            .app-sidebar {
+                flex: 0 0 380px;
+                width: 380px;
+                height: 100%;
+                overflow-y: auto;
+                padding: 20px;
+                border-right: 1px solid #dee2e6;
+                background: #fff;
+                text-align: left;
+            }
+            .app-sidebar h2 { font-size: 1.3rem; }
+            .app-sidebar .settings-area { margin-bottom: 14px; }
+            .app-sidebar .settings-area h3 {
+                font-size: 1rem;
+                margin-top: 10px;
+                margin-bottom: 8px;
+            }
+            .app-sidebar .settings-area h3:first-child,
+            .app-sidebar .settings-area > div:first-child > h3 {
+                margin-top: 0;
+            }
+            .sidebar-actions {
+                position: sticky;
+                bottom: 0;
+                background: #fff;
+                padding-top: 10px;
+                margin-top: 6px;
+            }
+            .app-main {
+                flex: 1;
+                min-width: 0;
+                height: 100%;
+                padding: 32px 24px;
+                overflow-y: auto;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+            .app-main > * {
+                width: 100%;
+                max-width: 760px;
+            }
+            .main-placeholder {
+                color: #999;
+                text-align: center;
+                margin-top: 18vh;
+                font-size: 15px;
+            }
+            @media (max-width: 900px) {
+                html, body {
+                    height: auto;
+                    overflow: visible;
+                }
+                .app-shell {
+                    height: auto;
+                    flex-direction: column;
+                }
+                .app-sidebar {
+                    width: 100%;
+                    flex: none;
+                    height: auto;
+                    max-height: none;
+                    overflow-y: visible;
+                    border-right: none;
+                    border-bottom: 1px solid #dee2e6;
+                }
+                .sidebar-actions { position: static; }
+                .app-main {
+                    height: auto;
+                    overflow-y: visible;
+                }
+                .main-placeholder { margin-top: 6vh; }
+            }
             #facesOutput {
                 display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 12px;
+                grid-template-columns: repeat(4, 1fr);
+                grid-template-rows: repeat(3, 1fr);
+                gap: 8px;
                 margin-top: 10px;
+                max-width: 720px;
+                margin-left: auto;
+                margin-right: auto;
             }
-            #facesOutput .face-cell {
-                text-align: center;
-            }
+            #facesOutput .face-cell { text-align: center; }
+            .face-cell[data-face="nz"] { grid-column: 1; grid-row: 2; }
+            .face-cell[data-face="nx"] { grid-column: 2; grid-row: 2; }
+            .face-cell[data-face="pz"] { grid-column: 3; grid-row: 2; }
+            .face-cell[data-face="px"] { grid-column: 4; grid-row: 2; }
+            .face-cell[data-face="py"] { grid-column: 3; grid-row: 1; }
+            .face-cell[data-face="ny"] { grid-column: 3; grid-row: 3; }
             #facesOutput canvas {
                 width: 100%;
                 border-radius: 6px;
@@ -29,21 +122,11 @@
                 color: #888;
                 margin-top: 4px;
             }
-            #vmtPreview {
-                background-color: #f0f0f0;
-                border-radius: 6px;
-                padding: 14px;
-                font-size: 13px;
-                text-align: left;
-                white-space: pre-wrap;
-                overflow-x: auto;
-            }
             .note-text {
                 font-size: 13px;
                 color: #666;
                 text-align: left;
             }
-
             .ball-controller-wrap {
                 width: 80px;
                 height: 80px;
@@ -70,124 +153,150 @@
                 pointer-events: none;
                 box-shadow: 0 0 4px rgba(0,0,0,0.5);
             }
+            .toast-container {
+                position: fixed;
+                top: 16px;
+                right: 16px;
+                z-index: 1055;
+                pointer-events: none;
+            }
+            .toast-container .toast {
+                pointer-events: auto;
+            }
         </style>
     </head>
     <body>
-        <div class="container animated-block text-center py-4">
-            <div id="drop-area">
-                <div>
-                    <h2>Matcap → Source EnvMap (VTF/VMT)</h2>
-                    <p class="mb-3">Unwraps a matcap sphere into a 6-face cubemap and builds a ready .vtf + .vmt. Runs entirely in your browser.</p>
-                    <input accept="image/*" class="form-control form-control-lg" id="imageInput" type="file">
+        <div id="toastContainer" class="toast-container"></div>
+        <div class="app-shell">
+            <aside class="app-sidebar">
+                <div id="drop-area">
+                    <h2>Matcap → EnvMap</h2>
+                    <p class="note-text mb-2">Unwraps a matcap sphere into a 6-face cubemap and builds a ready .vtf</p>
                 </div>
-            </div>
+                <input accept="image/*" class="form-control mb-3" id="imageInput" type="file">
 
-            <div class="row g-3 mt-1">
-                <div class="col-md-3">
-                    <div class="settings-area p-3 border rounded bg-light h-100">
-                        <h3>Face size</h3>
-                        <fieldset title="Size of each of the 6 cubemap faces.">
-                            <div class="btn-group w-100" role="group">
-                                <input class="btn-check" id="size-256" name="faceSize" type="radio" value="256">
-                                <label class="btn btn-outline-primary" for="size-256">256</label>
+                <div class="settings-area p-3 border rounded bg-light">
+                    <h3>Face size</h3>
+                    <fieldset title="Size of each of the 6 cubemap faces.">
+                        <div class="btn-group w-100" role="group">
+                            <input class="btn-check" id="size-256" name="faceSize" type="radio" value="256">
+                            <label class="btn btn-outline-primary" for="size-256">256</label>
 
-                                <input checked class="btn-check" id="size-512" name="faceSize" type="radio" value="512">
-                                <label class="btn btn-outline-primary" for="size-512">512</label>
+                            <input checked class="btn-check" id="size-512" name="faceSize" type="radio" value="512">
+                            <label class="btn btn-outline-primary" for="size-512">512</label>
 
-                                <input class="btn-check" id="size-1024" name="faceSize" type="radio" value="1024">
-                                <label class="btn btn-outline-primary" for="size-1024">1024</label>
-                            </div>
-                        </fieldset>
+                            <input class="btn-check" id="size-1024" name="faceSize" type="radio" value="1024">
+                            <label class="btn btn-outline-primary" for="size-1024">1024</label>
+                        </div>
+                    </fieldset>
+                    <h3>Compression</h3>
+                    <fieldset title="VTF pixel compression format.">
+                        <div class="btn-group w-100" role="group">
+                            <input checked class="btn-check" id="fmt-dxt1" name="pixelFormat" type="radio" value="DXT1">
+                            <label class="btn btn-outline-primary" for="fmt-dxt1">DXT1</label>
+
+                            <input class="btn-check" id="fmt-bgr888" name="pixelFormat" type="radio" value="BGR888">
+                            <label class="btn btn-outline-primary" for="fmt-bgr888">BGR888</label>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div class="settings-area p-3 border rounded bg-light">
+                    <h3>Orientation</h3>
+                    <fieldset title="Vertical row flipping options.">
+                        <div class="btn-group w-100" role="group">
+                            <input checked class="btn-check" id="flip-none" name="flipRows" type="radio" value="false">
+                            <label class="btn btn-outline-primary" for="flip-none">Normal</label>
+
+                            <input class="btn-check" id="flip-vertical" name="flipRows" type="radio" value="true">
+                            <label class="btn btn-outline-primary" for="flip-vertical">Flip rows</label>
+                        </div>
+                    </fieldset>
+                    <h3>Back-face fill</h3>
+                    <fieldset title="A single matcap only ever shows the front hemisphere of the sphere. This controls how the unseen back is filled in.">
+                        <div class="btn-group w-100 mb-2" role="group">
+                            <input checked class="btn-check" id="backfill-blur" name="backFill" type="radio" value="blur">
+                            <label class="btn btn-outline-primary" for="backfill-blur">Blur mirror</label>
+
+                            <input class="btn-check" id="backfill-flat" name="backFill" type="radio" value="flat">
+                            <label class="btn btn-outline-primary" for="backfill-flat">Flat color</label>
+                        </div>
+                    </fieldset>
+                    <div class="d-flex justify-content-between small text-muted">
+                        <label for="backBlurStrength" class="form-label mb-0">Fade rate:</label>
+                        <span><strong id="backBlurStrengthVal">1.0</strong>×</span>
                     </div>
+                    <input type="range" class="form-range" id="backBlurStrength" min="0.4" max="2.5" step="0.1" value="1.0">
                 </div>
 
-                <div class="col-md-3">
-                    <div class="settings-area p-3 border rounded bg-light h-100">
-                        <h3>Compression</h3>
-                        <fieldset title="VTF pixel compression format.">
-                            <div class="btn-group w-100" role="group">
-                                <input checked class="btn-check" id="fmt-dxt1" name="pixelFormat" type="radio" value="DXT1">
-                                <label class="btn btn-outline-primary" for="fmt-dxt1">DXT1</label>
+                <div class="settings-area p-3 border rounded bg-light">
+                    <h3>Overall softness</h3>
+                    <fieldset title="Side faces (px/nx/py/ny) are inherently mirror-symmetric for any single-photo matcap — this can't be removed, only visually broken up by softening everything a bit.">
+                        <div class="d-flex justify-content-between small text-muted">
+                            <label for="globalSoftness" class="form-label mb-0">Softness:</label>
+                            <span><strong id="globalSoftnessVal">0</strong>%</span>
+                        </div>
+                        <input type="range" class="form-range" id="globalSoftness" min="0" max="100" step="5" value="0">
+                        <p class="note-text mb-0">Blurs the whole cubemap (incl. the sharp front) to make the unavoidable mirror-symmetry on side faces less obvious. 0 = off, fully sharp.</p>
+                    </fieldset>
+                </div>
 
-                                <input class="btn-check" id="fmt-bgr888" name="pixelFormat" type="radio" value="BGR888">
-                                <label class="btn btn-outline-primary" for="fmt-bgr888">BGR888</label>
-                            </div>
-                        </fieldset>
+                <div class="settings-area p-3 border rounded bg-light">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h3 class="mb-0">Rotation</h3>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="resetRotation">Reset</button>
                     </div>
-                </div>
+                    <fieldset title="Drag the dot on the sphere to adjust Pitch and Yaw interactive.">
+                        <div class="ball-controller-wrap" id="ballController">
+                            <div class="ball-handle" id="ballHandle"></div>
+                        </div>
 
-                <div class="col-md-3">
-                    <div class="settings-area p-3 border rounded bg-light h-100">
-                        <h3>Orientation</h3>
-                        <fieldset title="Vertical row flipping options.">
-                            <div class="btn-group w-100" role="group">
-                                <input checked class="btn-check" id="flip-none" name="flipRows" type="radio" value="false">
-                                <label class="btn btn-outline-primary" for="flip-none">Normal</label>
-
-                                <input class="btn-check" id="flip-vertical" name="flipRows" type="radio" value="true">
-                                <label class="btn btn-outline-primary" for="flip-vertical">Flip rows</label>
-                            </div>
-                        </fieldset>
-                    </div>
-                </div>
-
-                <div class="col-md-3">
-                    <div class="settings-area p-3 border rounded bg-light h-100">
-                        <h3>Rotation</h3>
-                        <fieldset title="Drag the dot on the sphere to adjust Pitch and Yaw interactive.">
-                            <div class="ball-controller-wrap" id="ballController">
-                                <div class="ball-handle" id="ballHandle"></div>
-                            </div>
-
-                            <div class="d-flex flex-column gap-1">
-                                <div>
-                                    <div class="d-flex justify-content-between small text-muted">
-                                        <label for="rotX" class="form-label mb-0">Pitch (X):</label>
-                                        <span><strong id="rotXVal">0</strong>°</span>
-                                    </div>
-                                    <input type="range" class="form-range" id="rotX" min="-180" max="180" value="0">
+                        <div class="d-flex flex-column gap-1">
+                            <div>
+                                <div class="d-flex justify-content-between small text-muted">
+                                    <label for="rotX" class="form-label mb-0">Pitch (X):</label>
+                                    <span><strong id="rotXVal">0</strong>°</span>
                                 </div>
-                                <div>
-                                    <div class="d-flex justify-content-between small text-muted">
-                                        <label for="rotY" class="form-label mb-0">Yaw (Y):</label>
-                                        <span><strong id="rotYVal">0</strong>°</span>
-                                    </div>
-                                    <input type="range" class="form-range" id="rotY" min="-180" max="180" value="0">
-                                </div>
-                                <div>
-                                    <div class="d-flex justify-content-between small text-muted">
-                                        <label for="rotZ" class="form-label mb-0">Roll (Z):</label>
-                                        <span><strong id="rotZVal">0</strong>°</span>
-                                    </div>
-                                    <input type="range" class="form-range" id="rotZ" min="-180" max="180" value="0">
-                                </div>
+                                <input type="range" class="form-range" id="rotX" min="-180" max="180" value="0">
                             </div>
-                        </fieldset>
-                    </div>
+                            <div>
+                                <div class="d-flex justify-content-between small text-muted">
+                                    <label for="rotY" class="form-label mb-0">Yaw (Y):</label>
+                                    <span><strong id="rotYVal">0</strong>°</span>
+                                </div>
+                                <input type="range" class="form-range" id="rotY" min="-180" max="180" value="0">
+                            </div>
+                            <div>
+                                <div class="d-flex justify-content-between small text-muted">
+                                    <label for="rotZ" class="form-label mb-0">Roll (Z):</label>
+                                    <span><strong id="rotZVal">0</strong>°</span>
+                                </div>
+                                <input type="range" class="form-range" id="rotZ" min="-180" max="180" value="0">
+                            </div>
+                        </div>
+                    </fieldset>
                 </div>
-            </div>
 
-            <br>
+                <div class="sidebar-actions">
+                    <button class="btn btn-primary btn-lg w-100" id="generateBtn" disabled>Generate</button>
+                </div>
+            </aside>
 
-            <div id="drop-area">
-                <button class="btn btn-primary btn-lg" id="generateBtn" disabled>Generate</button>
-                <p id="status" class="mt-2 mb-0 note-text"></p>
+            <main class="app-main">
+                <p class="main-placeholder" id="mainPlaceholder">Waiting for Matcap...</p>
 
-                <div id="resultArea" class="drop-area2" style="display:none">
+                <div id="resultArea" style="display:none">
                     <h3>Cubemap faces</h3>
                     <output id="facesOutput"></output>
 
                     <div class="d-flex gap-2 justify-content-center flex-wrap mt-3 mb-3">
                         <button class="btn btn-success" id="dlVtf">Download .vtf</button>
-                        <button class="btn btn-outline-secondary" id="dlVmt">Download .vmt</button>
                         <button class="btn btn-outline-secondary" id="dlPngZip">Download 6 faces (.zip)</button>
                     </div>
 
-                    <h3>.vmt</h3>
-                    <pre id="vmtPreview"></pre>
                     <p class="note-text">Check the .vtf in VTFEdit before using it in-game.</p>
                 </div>
-            </div>
+            </main>
         </div>
 
         <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
