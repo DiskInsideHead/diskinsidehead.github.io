@@ -384,8 +384,8 @@ function smoothstep01(t) {
     return t * t * (3 - 2 * t);
 }
 
-function sampleBackHemisphere(filler, u, v, dz, mode, strength) {
-    const t = smoothstep01(-dz * strength);
+function sampleBackHemisphere(filler, u, v, dx, mode, strength) {
+    const t = smoothstep01(-dx * strength);
     if (mode === 'flat') {
         const sharp = bilinearLevel(filler.pyramid[0], u, v);
         return [
@@ -430,6 +430,8 @@ function generateFaces(size, isFast = false) {
     const backStrength = isFast ? 1.0 : getBackBlurStrength();
     const backFiller = isFast ? null : buildBackFiller();
     const globalSoftness = isFast ? 0 : getGlobalSoftness();
+    
+    const scale = getMatcapScale();
 
     for (const face of FACES) {
         const buf = new Uint8ClampedArray(size * size * 4);
@@ -446,21 +448,22 @@ function generateFaces(size, isFast = false) {
 
                 [dx, dy, dz] = rotateVector(dx, dy, dz, rx, ry, rz);
 
-                const u = 0.5 + dx * 0.5;
-                const v = 0.5 - dy * 0.5;
+                const u = 0.5 - (dz * 0.5) / scale;
+                const v = 0.5 - (dy * 0.5) / scale;
+                
                 let color;
-
+                
                 if (isFast) {
                     color = sampleFast(u, v);
-                } else if (dz < 0) {
-                    color = sampleBackHemisphere(backFiller, u, v, dz, backFillMode, backStrength);
+                } else if (dx < 0) {
+                    color = sampleBackHemisphere(backFiller, u, v, dx, backFillMode, backStrength);
                 } else {
                     color = sampleMatcap(u, v);
                 }
 
                 if (!isFast) {
                     const SEAM_HALF_WIDTH = 0.16;
-                    const seamT = 1 - smoothstep01(Math.abs(dz) / SEAM_HALF_WIDTH);
+                    const seamT = 1 - smoothstep01(Math.abs(dx) / SEAM_HALF_WIDTH);
                     if (seamT > 0) {
                         const seamSample = sampleMipTrilinear(backFiller.pyramid, u, v, 3.0);
                         color = [
@@ -797,7 +800,6 @@ function runGeneration(isFast = false) {
     if (!srcData) return;
 
     if (isFast) {
-        //showStatus('Fast Previewing...', 1000);
         const renderSize = 128;
         const faces = generateFaces(renderSize, true);
         renderPreview(faces, renderSize);
@@ -848,3 +850,27 @@ document.getElementById('dlPngZip').addEventListener('click', () => {
     const zip = buildZip(files);
     download(zip, 'matcap_faces.zip', 'application/zip');
 });
+
+const matcapScaleInput = document.getElementById('matcapScale');
+if (matcapScaleInput) {
+    const valSpan = document.getElementById('matcapScaleVal');
+    matcapScaleInput.addEventListener('mousedown', () => { isSliderInteracting = true; });
+    matcapScaleInput.addEventListener('touchstart', () => { isSliderInteracting = true; });
+    matcapScaleInput.addEventListener('input', () => {
+        if (valSpan) valSpan.textContent = parseFloat(matcapScaleInput.value).toFixed(2);
+        scheduleRender();
+    });
+    const stopScaleInput = () => {
+        if (isSliderInteracting) {
+            isSliderInteracting = false;
+            scheduleRender(true);
+        }
+    };
+    matcapScaleInput.addEventListener('mouseup', stopScaleInput);
+    matcapScaleInput.addEventListener('touchend', stopScaleInput);
+    matcapScaleInput.addEventListener('change', stopScaleInput);
+}
+
+function getMatcapScale() {
+    return matcapScaleInput ? parseFloat(matcapScaleInput.value) : 1.0;
+}

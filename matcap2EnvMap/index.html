@@ -105,10 +105,10 @@
                 margin-right: auto;
             }
             #facesOutput .face-cell { text-align: center; }
-            .face-cell[data-face="nz"] { grid-column: 1; grid-row: 2; }
-            .face-cell[data-face="nx"] { grid-column: 2; grid-row: 2; }
-            .face-cell[data-face="pz"] { grid-column: 3; grid-row: 2; }
-            .face-cell[data-face="px"] { grid-column: 4; grid-row: 2; }
+            .face-cell[data-face="nx"] { grid-column: 1; grid-row: 2; }
+            .face-cell[data-face="pz"] { grid-column: 2; grid-row: 2; }
+            .face-cell[data-face="px"] { grid-column: 3; grid-row: 2; }
+            .face-cell[data-face="nz"] { grid-column: 4; grid-row: 2; }
             .face-cell[data-face="py"] { grid-column: 3; grid-row: 1; }
             .face-cell[data-face="ny"] { grid-column: 3; grid-row: 3; }
             #facesOutput canvas {
@@ -276,7 +276,15 @@
                         </div>
                     </fieldset>
                 </div>
-
+                <div class="settings-area p-3 border rounded bg-light">
+                    <h3>Scale</h3>
+                    <fieldset title="Приближение центра маткапа для скрытия краев.">
+                        <div class="d-flex justify-content-between small text-muted">
+                            <span><strong id="matcapScaleVal">1.0</strong>×</span>
+                        </div>
+                        <input type="range" class="form-range" id="matcapScale" min="0.5" max="3.0" step="0.05" value="1.0">
+                    </fieldset>
+                </div>
                 <div class="sidebar-actions">
                     <button class="btn btn-primary btn-lg w-100" id="generateBtn" disabled>Generate</button>
                 </div>
