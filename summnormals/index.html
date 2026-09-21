@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Combine Normal Maps — DIH Tools</title>
+    <title>DIH - Normal Map Layers</title>
     <link crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="icon" type="image/x-icon" href="../styles/dih.ico">
     <link href="../styles/style.css" rel="stylesheet">
@@ -12,44 +12,85 @@
         html, body {
             height: 100%;
             margin: 0;
-            overflow: hidden; 
+            overflow: hidden;
         }
-
-        .preview-box {
+        .app-shell {
+            display: flex;
+            align-items: stretch;
+            height: 100vh;
+        }
+        .app-sidebar {
+            flex: 0 0 380px;
+            width: 380px;
+            height: 100%;
+            overflow-y: auto;
+            padding: 20px;
+            border-right: 1px solid #dee2e6;
+            background: #fff;
+            text-align: left;
+        }
+        .app-sidebar h2 { font-size: 1.3rem; }
+        .app-sidebar .settings-area { margin-bottom: 14px; }
+        .app-sidebar .settings-area h3 {
+            font-size: 1rem;
+            margin-top: 10px;
+            margin-bottom: 8px;
+        }
+        .app-sidebar .settings-area h3:first-child,
+        .app-sidebar .settings-area > div:first-child > h3 {
+            margin-top: 0;
+        }
+        .sidebar-actions {
+            position: sticky;
+            bottom: 0;
+            background: #fff;
+            padding-top: 10px;
+            margin-top: 6px;
+        }
+        .layer-limit-note {
+            font-size: 0.72rem;
+            color: #999;
+            text-align: center;
+            margin-top: 4px;
+        }
+        .app-main {
+            flex: 1;
+            min-width: 0;
+            height: 100%;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .main-placeholder {
+            color: #999;
+            text-align: center;
+            font-size: 15px;
+        }
+        #resultArea {
             width: 100%;
-            aspect-ratio: 1 / 1; 
-            background: #1a1a2e;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        .preview-box {
+            flex: 1;
+            width: 100%;
+            background: #0f0f1e;
             border-radius: 12px;
-            border: 2px solid #dee2e6;
+            border: 3px solid #dee2e6;
             display: flex;
             align-items: center;
             justify-content: center;
             overflow: hidden;
             position: relative;
         }
-        .col-lg-9 .preview-box {
-            aspect-ratio: auto; 
-        }
-
         #outCanvas {
             max-width: 100%;
             max-height: 100%;
-            object-fit: contain; 
-            image-rendering: pixelated; 
-        }
-
-        .drop-zone {
-            transition: transform 0.2s ease;
-        }
-
-        .drop-zone:hover {
-            transform: scale(1.02);
-        }
-        :root { --panel-bg: #ffffff; --accent-color: #286090; }
-        .preview-box img, .preview-box canvas {
-            max-width: 100%;
-            max-height: 100%;
             object-fit: contain;
+            image-rendering: pixelated;
         }
         .node-label {
             position: absolute;
@@ -62,70 +103,91 @@
             font-size: 0.75rem;
             z-index: 5;
         }
-        .drop-zone.bg-light { border-color: var(--accent-color) !important; border-style: dashed !important; }
+        :root { --panel-bg: #ffffff; --accent-color: #286090; }
+
+        .base-thumb {
+            height: 80px;
+            border-radius: 8px;
+            background: #1a1a2e center/cover no-repeat;
+            border: 1px solid #dee2e6;
+            position: relative;
+            margin-bottom: 8px;
+        }
+        .layer-card {
+            position: relative;
+        }
+        .layer-thumbs {
+            display: flex;
+            gap: 8px;
+        }
+        .layer-thumb {
+            flex: 1;
+            height: 60px;
+            border-radius: 6px;
+            background: #1a1a2e center/cover no-repeat;
+            border: 1px solid #dee2e6;
+            position: relative;
+            overflow: hidden;
+        }
+        .thumb-label {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            font-size: 0.62rem;
+            color: #ccc;
+            background: rgba(0,0,0,0.55);
+            padding: 1px 4px;
+            border-radius: 3px;
+            z-index: 2;
+        }
+        .note-text {
+            font-size: 12px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
 
-<div class="container-fluid vh-100 d-flex flex-column py-3 overflow-hidden container animated-block">
-    <div class="text-center" id="drop-area">
-        <div>
-            <h2>
-                Normal Maps Combiner
-            </h2>
+<div class="app-shell">
+    <aside class="app-sidebar">
+        <div id="drop-area">
+            <h2>Normal Map Layers</h2>
+            <p class="note-text mb-2">Базовая карта нормалей + любое число слоёв детализации, каждый со своей маской.</p>
         </div>
-    </div>
 
-    <div class="row flex-grow-1 overflow-hidden g-2 ">
-        
-        <div class="col-lg-2 d-flex flex-column g-2 h-100 overflow-auto mt-0">
-            
-            <label for="baseMap" class="w-100 mb-2" style="cursor: pointer;">
-                <div class="drop-zone">
-                    <div class="preview-box" id="basePreview">
-                        <span class="node-label">BASE</span>
-                        <span class="text-secondary small text-center px-2">Drop Base Map</span>
-                    </div>
-                </div>
-                <input type="file" id="baseMap" accept=".jpg,.jpeg,.png,.webp,.tga,.bmp" class="visually-hidden">
-            </label>
-
-            <div class="text-center fw-bold text-muted mb-2">+</div>
-
-            <label for="detailMap" class="w-100 mb-3" style="cursor: pointer;">
-                <div class="drop-zone">
-                    <div class="preview-box" id="detailPreview">
-                        <span class="node-label">DETAIL</span>
-                        <span class="text-secondary small text-center px-2">Drop Detail Map</span>
-                    </div>
-                </div>
-                <input type="file" id="detailMap" accept=".jpg,.jpeg,.png,.webp,.tga,.bmp" class="visually-hidden">
-            </label>
-
-            <div class="p-3 border rounded bg-white shadow-sm mt-auto mb-1">
-                <label for="strengthRange" class="form-label fw-bold small">
-                    <i class="fi-widget"></i> Adjust strength: <span id="strengthVal">1.00</span>
-                </label>
-                <input type="range" class="form-range" id="strengthRange" min="0" max="2" step="0.01" value="1.0">
-
-                <label for="scaleRange" class="form-label fw-bold small mt-2">
-                    <i class="fi-magnifying-glass"></i> Detail Scale: <span id="scaleVal">1.00</span>
-                </label>
-                <input type="range" class="form-range" id="scaleRange" min="0.1" max="10" step="0.1" value="1.0">
-                
-                <button id="downloadBtn" class="btn btn-success btn-sm w-100 mt-3 fw-bold">
-                    <i class="fi-download"></i> Download PNG
-                </button>
+        <div class="settings-area p-3 border rounded bg-light">
+            <h3>Base normal map</h3>
+            <div class="base-thumb" id="baseThumb">
+                <span class="thumb-label">BASE</span>
             </div>
+            <input type="file" class="form-control form-control-sm" id="baseInput" accept=".jpg,.jpeg,.png,.webp,.tga,.bmp">
         </div>
 
-        <div class="col-lg-10 h-100 mt-auto mb-2">
-            <div class="preview-box w-100 h-100 m-0" style="background: #0f0f1e; border-width: 3px;">
+        <div class="settings-area">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h3 class="mb-0">Detail layers</h3>
+            </div>
+            <div id="layersContainer"></div>
+            <button type="button" class="btn btn-outline-primary btn-sm w-100" id="addLayerBtn">+ Add layer</button>
+            <div class="layer-limit-note" id="layerLimitNote"></div>
+        </div>
+
+        <div class="sidebar-actions">
+            <button id="downloadBtn" class="btn btn-success w-100 fw-bold">
+                <i class="fi-download"></i> Download PNG
+            </button>
+        </div>
+    </aside>
+
+    <main class="app-main">
+        <p class="main-placeholder" id="mainPlaceholder">Waiting for base map...</p>
+        <div id="resultArea" style="display:none">
+            <div class="preview-box">
                 <span class="node-label">COMBINED</span>
                 <canvas id="outCanvas"></canvas>
             </div>
         </div>
-    </div>
+    </main>
 </div>
 
 <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>

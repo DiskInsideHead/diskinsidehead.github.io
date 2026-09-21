@@ -1,21 +1,33 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const baseInput = document.getElementById('baseMap');
-    const detailInput = document.getElementById('detailMap');
-    const strengthRange = document.getElementById('strengthRange');
-    const strengthVal = document.getElementById('strengthVal');
-    const outCanvas = document.getElementById('outCanvas');
+    const baseInput = document.getElementById('baseInput');
+    const baseThumb = document.getElementById('baseThumb');
+    const layersContainer = document.getElementById('layersContainer');
+    const addLayerBtn = document.getElementById('addLayerBtn');
+    const layerLimitNote = document.getElementById('layerLimitNote');
     const downloadBtn = document.getElementById('downloadBtn');
+    const canvas = document.getElementById('outCanvas');
+    const mainPlaceholder = document.getElementById('mainPlaceholder');
+    const resultArea = document.getElementById('resultArea');
 
-    const gl = outCanvas.getContext('webgl', { preserveDrawingBuffer: true });
+    const gl = canvas.getContext('webgl', { preserveDrawingBuffer: true });
+    if (!gl) { alert("WebGL не поддерживается вашим браузером"); return; }
 
-    const scaleRange = document.getElementById('scaleRange');
-    const scaleVal = document.getElementById('scaleVal');
+    const MAX_TEXTURE_UNITS = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
 
-    if (!gl) return alert("WebGL не поддерживается вашим браузером");
-
-    let textures = { base: null, detail: null };
-    let imagesLoaded = { base: false, detail: false };
+    let baseImg = null;
+    let baseTex = null;
+    let layers = [];
+    let nextLayerId = 1;
+    let program = null;
+    let positionLoc = null;
+    let baseLoc = null;
+    let whiteTex = null;
+    let neutralTex = null;
     let renderRequested = false;
+
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
 
     const vsSource = `
         attribute vec2 a_position;
@@ -23,65 +35,160 @@ document.addEventListener('DOMContentLoaded', () => {
         void main() {
             gl_Position = vec4(a_position, 0, 1);
             v_texCoord = (a_position + 1.0) / 2.0;
-            v_texCoord.y = 1.0 - v_texCoord.y; 
+            v_texCoord.y = 1.0 - v_texCoord.y;
         }`;
 
-    const fsSource = `
-        precision highp float;
-        uniform sampler2D u_baseMap;
-        uniform sampler2D u_detailMap;
-        uniform float u_strength;
-        uniform float u_scale;
-        varying vec2 v_texCoord;
+    function buildFragmentShader(numLayers) {
+        let src = `
+            precision highp float;
+            uniform sampler2D u_baseMap;
+            varying vec2 v_texCoord;
+        `;
+        for (let i = 0; i < numLayers; i++) {
+            src += `
+                uniform sampler2D u_detail${i};
+                uniform sampler2D u_mask${i};
+                uniform bool u_hasMask${i};
+                uniform float u_strength${i};
+                uniform float u_scale${i};
+            `;
+        }
+        src += `
+            vec3 blendNormals(vec3 n1, vec3 n2) {
+                n1 += vec3(0.0, 0.0, 1.0);
+                n2 *= vec3(-1.0, -1.0, 1.0);
+                return normalize(n1 * dot(n1, n2) / n1.z - n2);
+            }
+            void main() {
+                vec3 result = texture2D(u_baseMap, v_texCoord).rgb * 2.0 - 1.0;
+        `;
+        for (let i = 0; i < numLayers; i++) {
+            src += `
+                {
+                    vec2 uv = mod(v_texCoord * u_scale${i}, 1.0);
+                    vec3 n = texture2D(u_detail${i}, uv).rgb * 2.0 - 1.0;
+                    n.xy *= u_strength${i};
+                    n = normalize(n);
+                    float mask = u_hasMask${i} ? texture2D(u_mask${i}, v_texCoord).r : 1.0;
+                    vec3 blended = blendNormals(result, n);
+                    result = mix(result, blended, mask);
+                }
+            `;
+        }
+        src += `
+                gl_FragColor = vec4(normalize(result) * 0.5 + 0.5, 1.0);
+            }
+        `;
+        return src;
+    }
 
-        void main() {
-            vec3 n1 = texture2D(u_baseMap, v_texCoord).rgb * 2.0 - 1.0;
-            
-            vec2 scaledCoord = mod(v_texCoord * u_scale, 1.0);
-            vec3 n2 = texture2D(u_detailMap, scaledCoord).rgb * 2.0 - 1.0;
+    function createShader(gl, type, source) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, source);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+            console.error(gl.getShaderInfoLog(s));
+        }
+        return s;
+    }
 
-            n2.xy *= u_strength;
-            n2 = normalize(n2);
+    function createProgram(gl, vs, fs) {
+        const s1 = createShader(gl, gl.VERTEX_SHADER, vs);
+        const s2 = createShader(gl, gl.FRAGMENT_SHADER, fs);
+        const prog = gl.createProgram();
+        gl.attachShader(prog, s1);
+        gl.attachShader(prog, s2);
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+            console.error(gl.getProgramInfoLog(prog));
+        }
+        gl.deleteShader(s1);
+        gl.deleteShader(s2);
+        return prog;
+    }
 
-            n1 += vec3(0.0, 0.0, 1.0);
-            n2 *= vec3(-1.0, -1.0, 1.0);
-            vec3 r = n1 * dot(n1, n2) / n1.z - n2;
-            
-            gl_FragColor = vec4(normalize(r) * 0.5 + 0.5, 1.0);
-        }`;
+    function createSolidTexture(r, g, b, a) {
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([r, g, b, a]));
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        return tex;
+    }
 
+    function createTexture(img) {
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+        return tex;
+    }
 
-    const program = createProgram(gl, vsSource, fsSource);
-    const positionLoc = gl.getAttribLocation(program, "a_position");
-    const baseLoc = gl.getUniformLocation(program, "u_baseMap");
-    const detailLoc = gl.getUniformLocation(program, "u_detailMap");
-    const strengthLoc = gl.getUniformLocation(program, "u_strength");
-    const scaleLoc = gl.getUniformLocation(program, "u_scale");
+    function loadImage(file) {
+        return new Promise(res => {
+            const img = new Image();
+            const url = URL.createObjectURL(file);
+            img.onload = () => { res(img); setTimeout(() => URL.revokeObjectURL(url), 100); };
+            img.src = url;
+        });
+    }
 
+    whiteTex = createSolidTexture(255, 255, 255, 255);
+    neutralTex = createSolidTexture(128, 128, 255, 255);
 
-    const buffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+    function rebuildProgram() {
+        if (program) gl.deleteProgram(program);
+        const fsSource = buildFragmentShader(layers.length);
+        program = createProgram(gl, vsSource, fsSource);
+        positionLoc = gl.getAttribLocation(program, 'a_position');
+        baseLoc = gl.getUniformLocation(program, 'u_baseMap');
+        layers.forEach((layer, i) => {
+            layer.loc = {
+                detail: gl.getUniformLocation(program, `u_detail${i}`),
+                mask: gl.getUniformLocation(program, `u_mask${i}`),
+                hasMask: gl.getUniformLocation(program, `u_hasMask${i}`),
+                strength: gl.getUniformLocation(program, `u_strength${i}`),
+                scale: gl.getUniformLocation(program, `u_scale${i}`),
+            };
+        });
+    }
 
     function render() {
-        if (!imagesLoaded.base || !imagesLoaded.detail) return;
+        if (!baseTex || !program) return;
 
-        gl.viewport(0, 0, outCanvas.width, outCanvas.height);
+        gl.viewport(0, 0, canvas.width, canvas.height);
         gl.useProgram(program);
 
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
         gl.enableVertexAttribArray(positionLoc);
         gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
 
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, textures.base);
-        gl.uniform1i(baseLoc, 0);
+        let unit = 0;
+        gl.activeTexture(gl.TEXTURE0 + unit);
+        gl.bindTexture(gl.TEXTURE_2D, baseTex);
+        gl.uniform1i(baseLoc, unit);
+        unit++;
 
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, textures.detail);
-        gl.uniform1i(detailLoc, 1);
+        layers.forEach(layer => {
+            gl.activeTexture(gl.TEXTURE0 + unit);
+            gl.bindTexture(gl.TEXTURE_2D, layer.detailTex || neutralTex);
+            gl.uniform1i(layer.loc.detail, unit);
+            unit++;
 
-        gl.uniform1f(strengthLoc, parseFloat(strengthRange.value));
-        gl.uniform1f(scaleLoc, parseFloat(scaleRange.value)); 
+            gl.activeTexture(gl.TEXTURE0 + unit);
+            gl.bindTexture(gl.TEXTURE_2D, layer.maskTex || whiteTex);
+            gl.uniform1i(layer.loc.mask, unit);
+            unit++;
+
+            gl.uniform1i(layer.loc.hasMask, layer.maskTex ? 1 : 0);
+            gl.uniform1f(layer.loc.strength, layer.strength);
+            gl.uniform1f(layer.loc.scale, layer.scale);
+        });
 
         gl.drawArrays(gl.TRIANGLES, 0, 6);
         renderRequested = false;
@@ -94,60 +201,181 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    async function onImageSelect(input, type) {
-        const file = input.files[0];
-        if (!file) return;
-        
-        if (textures[type]) {
-            gl.deleteTexture(textures[type]);
-        }
-
-        const img = await loadImage(file);
-        
-        if (type === 'base') {
-            outCanvas.width = img.width;
-            outCanvas.height = img.height;
-            imagesLoaded.base = true;
-        } else {
-            imagesLoaded.detail = true;
-        }
-        
-        textures[type] = createTexture(gl, img);
-        updatePreview(type === 'base' ? 'basePreview' : 'detailPreview', img.src, type.toUpperCase());
-        
-        render(); 
-        
-        const currentSrc = img.src;
-        setTimeout(() => URL.revokeObjectURL(currentSrc), 100); 
+    function setThumb(el, src) {
+        el.style.backgroundImage = `url("${src}")`;
     }
 
-    strengthRange.addEventListener('input', () => {
-        strengthVal.textContent = parseFloat(strengthRange.value).toFixed(2);
-        requestRender(); 
+    function clearThumb(el) {
+        el.style.backgroundImage = '';
+    }
+
+    function usedTextureUnits() {
+        return 1 + layers.length * 2;
+    }
+
+    function updateAddLayerState() {
+        const wouldUse = 1 + (layers.length + 1) * 2;
+        addLayerBtn.disabled = wouldUse > MAX_TEXTURE_UNITS;
+        layerLimitNote.textContent = addLayerBtn.disabled
+            ? `Лимит текстурных юнитов GPU (${MAX_TEXTURE_UNITS}) достигнут`
+            : `Слоёв: ${layers.length} (использовано ${usedTextureUnits()}/${MAX_TEXTURE_UNITS} юнитов)`;
+    }
+
+    function renumberLayers() {
+        [...layersContainer.children].forEach((card, idx) => {
+            card.querySelector('.layer-title').textContent = `Layer ${idx + 1}`;
+        });
+    }
+
+    function createLayerCard(layer) {
+        const card = document.createElement('div');
+        card.className = 'settings-area p-3 border rounded bg-light layer-card';
+
+        card.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h3 class="mb-0 layer-title">Layer</h3>
+                <button type="button" class="btn btn-sm btn-outline-danger remove-layer-btn">×</button>
+            </div>
+            <div class="layer-thumbs mb-2">
+                <div class="layer-thumb detail-thumb"><span class="thumb-label">Detail</span></div>
+                <div class="layer-thumb mask-thumb"><span class="thumb-label">Mask</span></div>
+            </div>
+            <label class="form-label small mb-0 mt-1">Detail map</label>
+            <input type="file" class="form-control form-control-sm mb-2 detail-input" accept=".jpg,.jpeg,.png,.webp,.tga,.bmp">
+            <label class="form-label small mb-0">Mask (чёрный = без эффекта)</label>
+            <div class="d-flex gap-2 mb-2">
+                <input type="file" class="form-control form-control-sm mask-input" accept=".jpg,.jpeg,.png,.webp,.tga,.bmp">
+                <button type="button" class="btn btn-sm btn-outline-secondary clear-mask-btn">Clear</button>
+            </div>
+            <div class="d-flex justify-content-between small text-muted">
+                <label class="form-label mb-0">Strength:</label>
+                <span><strong class="strength-val">1.00</strong></span>
+            </div>
+            <input type="range" class="form-range strength-range" min="0" max="2" step="0.01" value="1.0">
+            <div class="d-flex justify-content-between small text-muted mt-1">
+                <label class="form-label mb-0">Scale:</label>
+                <span><strong class="scale-val">1.00</strong></span>
+            </div>
+            <input type="range" class="form-range scale-range" min="0.1" max="10" step="0.1" value="1.0">
+        `;
+
+        const detailInput = card.querySelector('.detail-input');
+        const maskInput = card.querySelector('.mask-input');
+        const clearMaskBtn = card.querySelector('.clear-mask-btn');
+        const strengthRange = card.querySelector('.strength-range');
+        const strengthVal = card.querySelector('.strength-val');
+        const scaleRange = card.querySelector('.scale-range');
+        const scaleVal = card.querySelector('.scale-val');
+        const detailThumb = card.querySelector('.detail-thumb');
+        const maskThumb = card.querySelector('.mask-thumb');
+        const removeBtn = card.querySelector('.remove-layer-btn');
+
+        detailInput.addEventListener('change', async () => {
+            const file = detailInput.files[0];
+            if (!file) return;
+            if (layer.detailTex) gl.deleteTexture(layer.detailTex);
+            const img = await loadImage(file);
+            layer.detailTex = createTexture(img);
+            setThumb(detailThumb, img.src);
+            requestRender();
+        });
+
+        maskInput.addEventListener('change', async () => {
+            const file = maskInput.files[0];
+            if (!file) return;
+            if (layer.maskTex) gl.deleteTexture(layer.maskTex);
+            const img = await loadImage(file);
+            layer.maskTex = createTexture(img);
+            setThumb(maskThumb, img.src);
+            requestRender();
+        });
+
+        clearMaskBtn.addEventListener('click', () => {
+            if (layer.maskTex) gl.deleteTexture(layer.maskTex);
+            layer.maskTex = null;
+            maskInput.value = '';
+            clearThumb(maskThumb);
+            requestRender();
+        });
+
+        strengthRange.addEventListener('input', () => {
+            layer.strength = parseFloat(strengthRange.value);
+            strengthVal.textContent = layer.strength.toFixed(2);
+            requestRender();
+        });
+
+        scaleRange.addEventListener('input', () => {
+            layer.scale = parseFloat(scaleRange.value);
+            scaleVal.textContent = layer.scale.toFixed(2);
+            requestRender();
+        });
+
+        removeBtn.addEventListener('click', () => removeLayer(layer.id, card));
+
+        return card;
+    }
+
+    function addLayer() {
+        const wouldUse = 1 + (layers.length + 1) * 2;
+        if (wouldUse > MAX_TEXTURE_UNITS) {
+            alert(`Лимит текстурных юнитов GPU (${MAX_TEXTURE_UNITS}) достигнут — больше слоёв не добавить.`);
+            return;
+        }
+        const layer = { id: nextLayerId++, detailTex: null, maskTex: null, strength: 1.0, scale: 1.0 };
+        layers.push(layer);
+        layersContainer.appendChild(createLayerCard(layer));
+        renumberLayers();
+        rebuildProgram();
+        updateAddLayerState();
+        requestRender();
+    }
+
+    function removeLayer(id, cardEl) {
+        const idx = layers.findIndex(l => l.id === id);
+        if (idx === -1) return;
+        const layer = layers[idx];
+        if (layer.detailTex) gl.deleteTexture(layer.detailTex);
+        if (layer.maskTex) gl.deleteTexture(layer.maskTex);
+        layers.splice(idx, 1);
+        cardEl.remove();
+        renumberLayers();
+        rebuildProgram();
+        updateAddLayerState();
+        requestRender();
+    }
+
+    baseInput.addEventListener('change', async () => {
+        const file = baseInput.files[0];
+        if (!file) return;
+        if (baseTex) gl.deleteTexture(baseTex);
+        const img = await loadImage(file);
+        baseImg = img;
+        canvas.width = img.width;
+        canvas.height = img.height;
+        baseTex = createTexture(img);
+        setThumb(baseThumb, img.src);
+        mainPlaceholder.style.display = 'none';
+        resultArea.style.display = 'flex';
+        requestRender();
     });
 
-    scaleRange.addEventListener('input', () => {
-        scaleVal.textContent = parseFloat(scaleRange.value).toFixed(2);
-        requestRender(); 
-    });
-
-    baseInput.addEventListener('change', () => onImageSelect(baseInput, 'base'));
-    detailInput.addEventListener('change', () => onImageSelect(detailInput, 'detail'));
+    addLayerBtn.addEventListener('click', addLayer);
 
     downloadBtn.addEventListener('click', () => {
-        if (!imagesLoaded.base || !imagesLoaded.detail) {
-            return alert("Загрузите оба изображения!");
+        if (!baseTex) {
+            alert("Сначала загрузите базовую карту нормалей!");
+            return;
         }
+        render();
 
-        render(); 
-        
         downloadBtn.disabled = true;
         downloadBtn.textContent = "Processing...";
 
-        outCanvas.toBlob((blob) => {
+        canvas.toBlob((blob) => {
             if (!blob) {
                 alert("Connection error.");
                 downloadBtn.disabled = false;
+                downloadBtn.textContent = "Download PNG";
                 return;
             }
             const url = URL.createObjectURL(blob);
@@ -157,72 +385,11 @@ document.addEventListener('DOMContentLoaded', () => {
             link.click();
             setTimeout(() => URL.revokeObjectURL(url), 100);
             downloadBtn.disabled = false;
-            downloadBtn.textContent = "Download PNG";
+            downloadBtn.innerHTML = '<i class="fi-download"></i> Download PNG';
         }, 'image/png');
     });
 
-    function createTexture(gl, img) {
-        const tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-        return tex;
-    }
-
-    function createProgram(gl, vs, fs) {
-        const s1 = gl.createShader(gl.VERTEX_SHADER);
-        gl.shaderSource(s1, vs); gl.compileShader(s1);
-        const s2 = gl.createShader(gl.FRAGMENT_SHADER);
-        gl.shaderSource(s2, fs); gl.compileShader(s2);
-        const prog = gl.createProgram();
-        gl.attachShader(prog, s1); gl.attachShader(prog, s2);
-        gl.linkProgram(prog);
-        return prog;
-    }
-
-    function loadImage(file) {
-        return new Promise(res => {
-            const img = new Image();
-            const url = URL.createObjectURL(file);
-            img.onload = () => res(img);
-            img.src = url;
-        });
-    }
-
-    function updatePreview(id, src, label) {
-        const container = document.getElementById(id);
-        container.innerHTML = `<span class="node-label">${label}</span><img src="${src}" style="max-width:100%; max-height:100%;">`;
-    }
-
-    window.addEventListener('dragover', e => e.preventDefault(), false);
-    window.addEventListener('drop', e => e.preventDefault(), false);
-        
-    [baseInput, detailInput].forEach(input => {
-        const zone = input.parentElement.querySelector('.drop-zone');
-
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            zone.addEventListener(eventName, (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-            }, false);
-        });
-
-        zone.addEventListener('dragover', () => zone.classList.add('bg-light'));
-        zone.addEventListener('dragleave', () => zone.classList.remove('bg-light'));
-
-        zone.addEventListener('drop', (e) => {
-            zone.classList.remove('bg-light');
-            
-            const dt = e.dataTransfer;
-            const files = dt.files;
-
-            if (files.length > 0) {
-                input.files = files;
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-        });
-    });
+    rebuildProgram();
+    updateAddLayerState();
+    addLayer();
 });
