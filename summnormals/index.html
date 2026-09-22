@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,6 +9,9 @@
     <link href="../styles/style.css" rel="stylesheet">
     <link href="../styles/foundation-icons.css" rel="stylesheet">
     <style>
+        :root { --accent-color: #286090; }
+        [hidden] { display: none !important; }
+
         html, body {
             height: 100%;
             margin: 0;
@@ -19,174 +22,263 @@
             align-items: stretch;
             height: 100vh;
         }
+
+        /* ---------- Sidebar ---------- */
         .app-sidebar {
-            flex: 0 0 380px;
-            width: 380px;
+            flex: 0 0 340px;
+            width: 340px;
             height: 100%;
             overflow-y: auto;
-            padding: 20px;
+            padding: 16px;
             border-right: 1px solid #dee2e6;
             background: #fff;
             text-align: left;
+            transition: opacity .15s;
         }
-        .app-sidebar h2 { font-size: 1.3rem; }
-        .app-sidebar .settings-area { margin-bottom: 14px; }
+        .app-shell.is-busy .app-sidebar { opacity: .6; }
+        .app-sidebar h2 { font-size: 1.3rem; margin-bottom: 12px; }
+        .app-sidebar .settings-area { margin-bottom: 12px; }
         .app-sidebar .settings-area h3 {
             font-size: 1rem;
-            margin-top: 10px;
-            margin-bottom: 8px;
+            margin: 0;
         }
-        .app-sidebar .settings-area h3:first-child,
-        .app-sidebar .settings-area > div:first-child > h3 {
-            margin-top: 0;
+        .section-title {
+            font-size: 1rem;
+            margin: 16px 0 8px;
         }
         .sidebar-actions {
             position: sticky;
             bottom: 0;
             background: #fff;
-            padding-top: 10px;
-            margin-top: 6px;
+            padding: 12px 16px 16px;
+            margin: 8px -16px -16px;
+            border-top: 1px solid #eee;
         }
-        .layer-limit-note {
-            font-size: 0.72rem;
-            color: #999;
+
+        /* ---------- Square image slots ---------- */
+        .slot-wrap {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+        .slot {
+            position: relative;
+            width: 64px;
+            height: 64px;
+            flex: none;
+            border-radius: 8px;
+            border: 1px dashed #adb5bd;
+            background: #e9ecef;
+            cursor: pointer;
+            overflow: hidden;
+        }
+        .slot.slot-lg { width: 80px; height: 80px; }
+        .slot::before {
+            content: '+';
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            color: #868e96;
+        }
+        .slot canvas {
+            display: none;
+            width: 100%;
+            height: 100%;
+        }
+        .slot.filled {
+            border: 1px solid #dee2e6;
+            background: #1a1a2e;
+        }
+        .slot.filled::before { content: none; }
+        .slot.filled canvas { display: block; }
+        .slot:hover, .slot:focus-visible, .slot.dragover {
+            border-color: var(--accent-color);
+            outline: none;
+        }
+        .slot.dragover { background: #dbe7f3; }
+        .slot-clear {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 18px;
+            height: 18px;
+            padding: 0;
+            border: 0;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, .65);
+            color: #fff;
+            font-size: 13px;
+            line-height: 18px;
             text-align: center;
-            margin-top: 4px;
+            cursor: pointer;
+            display: none;
         }
+        .slot.filled:hover .slot-clear,
+        .slot.filled:focus-within .slot-clear { display: block; }
+        .slot-caption {
+            font-size: .75rem;
+            color: #6c757d;
+        }
+
+        .base-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .base-info { min-width: 0; font-size: .85rem; }
+        .base-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-weight: 600;
+        }
+        .base-dims { color: #6c757d; }
+
+        .layer-slots {
+            display: flex;
+            gap: 12px;
+        }
+        .slider-row + .slider-row { margin-top: 4px; }
+
+        /* ---------- Main / preview ---------- */
         .app-main {
             flex: 1;
             min-width: 0;
             height: 100%;
-            padding: 24px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
+            padding: 16px;
+            position: relative;
         }
-        .main-placeholder {
-            color: #999;
-            text-align: center;
-            font-size: 15px;
-        }
-        #resultArea {
+        .dropzone {
             width: 100%;
             height: 100%;
             display: flex;
-            flex-direction: column;
-        }
-        .preview-box {
-            flex: 1;
-            width: 100%;
-            background: #0f0f1e;
-            border-radius: 12px;
-            border: 3px solid #dee2e6;
-            display: flex;
             align-items: center;
             justify-content: center;
-            overflow: hidden;
-            position: relative;
+            border: 2px dashed #ced4da;
+            border-radius: 12px;
+            color: #868e96;
+            font-size: 15px;
+            cursor: pointer;
+            transition: border-color .15s, color .15s, background .15s;
         }
+        .dropzone:hover, .dropzone.dragover {
+            border-color: var(--accent-color);
+            color: var(--accent-color);
+            background: #f3f7fb;
+        }
+        #resultArea { width: 100%; height: 100%; }
+        .preview-box {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: #0f0f1e;
+            border-radius: 12px;
+            border: 1px solid #dee2e6;
+            overflow: hidden;
+            cursor: grab;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .preview-box.dragging { cursor: grabbing; }
         #outCanvas {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-            image-rendering: pixelated;
-        }
-        .node-label {
             position: absolute;
-            top: 10px;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .view-tools {
+            position: absolute;
             left: 10px;
-            background: rgba(0,0,0,0.6);
-            color: white;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            z-index: 5;
-        }
-        :root { --panel-bg: #ffffff; --accent-color: #286090; }
-
-        .base-thumb {
-            height: 80px;
-            border-radius: 8px;
-            background: #1a1a2e center/cover no-repeat;
-            border: 1px solid #dee2e6;
-            position: relative;
-            margin-bottom: 8px;
-        }
-        .layer-card {
-            position: relative;
-        }
-        .layer-thumbs {
+            bottom: 10px;
             display: flex;
-            gap: 8px;
+            align-items: center;
+            gap: 4px;
+            padding: 3px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, .6);
+            color: #fff;
+            font-size: .8rem;
+            cursor: default;
         }
-        .layer-thumb {
-            flex: 1;
-            height: 60px;
-            border-radius: 6px;
-            background: #1a1a2e center/cover no-repeat;
-            border: 1px solid #dee2e6;
-            position: relative;
-            overflow: hidden;
+        .view-tools .zoom-label {
+            min-width: 48px;
+            padding: 0 6px;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
         }
-        .thumb-label {
+        .view-tools button {
+            border: 0;
+            border-radius: 5px;
+            padding: 2px 8px;
+            background: rgba(255, 255, 255, .15);
+            color: #fff;
+            font-size: .8rem;
+        }
+        .view-tools button:hover { background: rgba(255, 255, 255, .3); }
+        .toast-msg {
             position: absolute;
-            top: 2px;
-            left: 2px;
-            font-size: 0.62rem;
-            color: #ccc;
-            background: rgba(0,0,0,0.55);
-            padding: 1px 4px;
-            border-radius: 3px;
-            z-index: 2;
-        }
-        .note-text {
-            font-size: 12px;
-            color: #666;
+            left: 50%;
+            bottom: 28px;
+            transform: translateX(-50%);
+            max-width: 80%;
+            padding: 8px 14px;
+            border-radius: 8px;
+            background: #842029;
+            color: #fff;
+            font-size: .85rem;
+            z-index: 10;
         }
     </style>
 </head>
 <body>
 
-<div class="app-shell">
+<div class="app-shell" id="appShell">
     <aside class="app-sidebar">
         <div id="drop-area">
             <h2>Normal Map Layers</h2>
-            <p class="note-text mb-2">Базовая карта нормалей + любое число слоёв детализации, каждый со своей маской.</p>
         </div>
 
         <div class="settings-area p-3 border rounded bg-light">
-            <h3>Base normal map</h3>
-            <div class="base-thumb" id="baseThumb">
-                <span class="thumb-label">BASE</span>
+            <h3 class="mb-2">Base map</h3>
+            <div class="base-row">
+                <div id="baseSlotHost"></div>
+                <div class="base-info" id="baseInfo" hidden>
+                    <div class="base-name" id="baseName"></div>
+                    <div class="base-dims" id="baseDims"></div>
+                </div>
             </div>
-            <input type="file" class="form-control form-control-sm" id="baseInput" accept=".jpg,.jpeg,.png,.webp,.tga,.bmp">
         </div>
 
-        <div class="settings-area">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h3 class="mb-0">Detail layers</h3>
-            </div>
-            <div id="layersContainer"></div>
-            <button type="button" class="btn btn-outline-primary btn-sm w-100" id="addLayerBtn">+ Add layer</button>
-            <div class="layer-limit-note" id="layerLimitNote"></div>
-        </div>
+        <h3 class="section-title">Detail layers</h3>
+        <div id="layersContainer"></div>
+        <button type="button" class="btn btn-outline-primary btn-sm w-100" id="addLayerBtn">+ Add layer</button>
 
         <div class="sidebar-actions">
-            <button id="downloadBtn" class="btn btn-success w-100 fw-bold">
+            <button id="downloadBtn" class="btn btn-success w-100 fw-bold" disabled>
                 <i class="fi-download"></i> Download PNG
             </button>
         </div>
     </aside>
 
-    <main class="app-main">
-        <p class="main-placeholder" id="mainPlaceholder">Waiting for base map...</p>
-        <div id="resultArea" style="display:none">
-            <div class="preview-box">
-                <span class="node-label">COMBINED</span>
+    <main class="app-main" id="appMain">
+        <div class="dropzone" id="mainPlaceholder" role="button" tabindex="0">Drop or click to load a base normal map</div>
+        <div id="resultArea" hidden>
+            <div class="preview-box" id="previewBox">
                 <canvas id="outCanvas"></canvas>
+                <div class="view-tools">
+                    <span class="zoom-label" id="zoomLabel">100%</span>
+                    <button type="button" id="fitBtn" title="Fit to window">Fit</button>
+                    <button type="button" id="actualBtn" title="Actual pixels">1:1</button>
+                </div>
             </div>
         </div>
+        <div class="toast-msg" id="toast" hidden></div>
     </main>
 </div>
 
