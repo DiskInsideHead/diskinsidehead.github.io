@@ -175,10 +175,19 @@
                 </div>
                 <input accept="image/*" class="form-control mb-3" id="imageInput" type="file">
 
+                <label for="matPath" class="form-label mb-1">Имя файла</label>
+                <input class="form-control mb-3" id="matPath" type="text" value="material" placeholder="material">
+
                 <div class="settings-area p-3 border rounded bg-light">
                     <h3>Face size</h3>
                     <fieldset title="Size of each of the 6 cubemap faces.">
                         <div class="btn-group w-100" role="group">
+                            <input class="btn-check" id="size-64" name="faceSize" type="radio" value="64">
+                            <label class="btn btn-outline-primary" for="size-64">64</label>
+
+                            <input class="btn-check" id="size-128" name="faceSize" type="radio" value="128">
+                            <label class="btn btn-outline-primary" for="size-128">128</label>
+
                             <input class="btn-check" id="size-256" name="faceSize" type="radio" value="256">
                             <label class="btn btn-outline-primary" for="size-256">256</label>
 
@@ -299,7 +308,23 @@
 
                     <div class="d-flex gap-2 justify-content-center flex-wrap mt-3 mb-3">
                         <button class="btn btn-success" id="dlVtf">Download .vtf</button>
+                        <button class="btn btn-outline-warning" id="dlVtfHdr">Download .hdr.vtf</button>
                         <button class="btn btn-outline-secondary" id="dlPngZip">Download 6 faces (.zip)</button>
+                    </div>
+
+                    <div class="d-flex justify-content-center mb-3">
+                        <fieldset title="Размер граней для .hdr.vtf">
+                            <div class="btn-group btn-group-sm" role="group">
+                                <input class="btn-check" id="hdrsize-full" name="hdrSizeDiv" type="radio" value="1">
+                                <label class="btn btn-outline-warning" for="hdrsize-full">HDR: full size</label>
+
+                                <input checked class="btn-check" id="hdrsize-half" name="hdrSizeDiv" type="radio" value="2">
+                                <label class="btn btn-outline-warning" for="hdrsize-half">HDR: /2</label>
+
+                                <input class="btn-check" id="hdrsize-quarter" name="hdrSizeDiv" type="radio" value="4">
+                                <label class="btn btn-outline-warning" for="hdrsize-quarter">HDR: /4</label>
+                            </div>
+                        </fieldset>
                     </div>
 
                     <p class="note-text">Check the .vtf in VTFEdit before using it in-game.</p>

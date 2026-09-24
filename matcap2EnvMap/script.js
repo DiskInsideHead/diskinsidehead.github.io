@@ -525,7 +525,48 @@ const VTF_FORMATS = {
     BGR888: 3,
     BGRA8888: 12,
     DXT1: 13,
+    RGBA16161616F: 24,
 };
+
+// Minimal IEEE-754 half-float encoder (values expected in the 0..1 range).
+function toHalfFloat(value) {
+    const floatView = new Float32Array(1);
+    const int32View = new Uint32Array(floatView.buffer);
+    floatView[0] = value;
+    const f = int32View[0];
+
+    const sign = (f >> 16) & 0x8000;
+    const exponent = ((f >> 23) & 0xff) - 127 + 15;
+    const mantissa = f & 0x7fffff;
+
+    if (exponent <= 0) {
+        if (exponent < -10) return sign;
+        const m = mantissa | 0x800000;
+        const shift = 14 - exponent;
+        return sign | (m >> shift);
+    } else if (exponent >= 31) {
+        return sign | 0x7c00;
+    }
+    return sign | (exponent << 10) | (mantissa >> 13);
+}
+
+// Packs SDR 0-255 RGBA into RGBA16161616F (half float per channel, values 0..1).
+// This is what lets us ship a matching "_env.hdr.vtf" next to the regular
+// "_env.vtf": same picture, just stored in the format the engine expects
+// when HDR rendering is on, so it stops being read at the wrong exposure/gamma.
+function packRGBA16161616F(src) {
+    const px = src.length / 4;
+    const out = new Uint8Array(px * 8);
+    let o = 0;
+    for (let i = 0; i < src.length; i += 4) {
+        for (let ch = 0; ch < 4; ch++) {
+            const h = toHalfFloat(src[i + ch] / 255);
+            out[o] = h & 0xff; out[o + 1] = (h >> 8) & 0xff;
+            o += 2;
+        }
+    }
+    return out;
+}
 
 function packBGRA8888(src) {
     const out = new Uint8Array(src.length);
@@ -620,6 +661,7 @@ function packFace(rgba, size, format) {
         case 'BGRA8888': return packBGRA8888(rgba);
         case 'BGR888': return packBGR888(rgba);
         case 'DXT1': return packDXT1(rgba, size);
+        case 'RGBA16161616F': return packRGBA16161616F(rgba);
         default: return rgba;
     }
 }
@@ -629,14 +671,68 @@ function faceByteSize(size, format) {
         case 'BGRA8888': return size * size * 4;
         case 'BGR888': return size * size * 3;
         case 'DXT1': return (size / 4) * (size / 4) * 8;
+        case 'RGBA16161616F': return size * size * 8;
         default: return size * size * 4;
     }
 }
 
-function buildVTF(faces, size, flipRows, format) {
+// Box-filter downsample of one RGBA face, size -> size/2. Used to build the
+// mip chain (size, size/2, size/4, ...) that Source expects a cubemap to
+// actually have instead of a single NOMIP level.
+function downsampleFace(src, size) {
+    const half = size / 2;
+    const out = new Uint8ClampedArray(half * half * 4);
+    for (let y = 0; y < half; y++) {
+        const y0 = y * 2, y1 = y0 + 1;
+        for (let x = 0; x < half; x++) {
+            const x0 = x * 2, x1 = x0 + 1;
+            const o00 = (y0 * size + x0) * 4, o10 = (y0 * size + x1) * 4;
+            const o01 = (y1 * size + x0) * 4, o11 = (y1 * size + x1) * 4;
+            const oo = (y * half + x) * 4;
+            for (let ch = 0; ch < 4; ch++) {
+                out[oo + ch] = (src[o00 + ch] + src[o10 + ch] + src[o01 + ch] + src[o11 + ch]) / 4;
+            }
+        }
+    }
+    return out;
+}
+
+// Builds the full mip chain for all 6 faces, largest first, stopping at
+// minSize (4x4 for DXT1 since it's block-compressed, 1x1 otherwise).
+function buildMipChain(faces, size, minSize) {
+    const chain = [{ size, faces }];
+    let curSize = size, curFaces = faces;
+    while (curSize > minSize) {
+        const nextSize = curSize / 2;
+        const nextFaces = {};
+        for (const face of FACES) nextFaces[face] = downsampleFace(curFaces[face], curSize);
+        chain.push({ size: nextSize, faces: nextFaces });
+        curSize = nextSize;
+        curFaces = nextFaces;
+    }
+    return chain;
+}
+
+function flipFaceRows(rawRgba, size) {
+    const rowBytes = size * 4;
+    const flipped = new Uint8ClampedArray(rawRgba.length);
+    for (let row = 0; row < size; row++) {
+        flipped.set(rawRgba.subarray(row * rowBytes, (row + 1) * rowBytes), (size - 1 - row) * rowBytes);
+    }
+    return flipped;
+}
+
+// Builds a VTF with a proper mip chain (size, size/2, size/4, ... down to
+// minSize). DXT1 is block-compressed so it can't go below a 4x4 block;
+// everything else goes down to 1x1. VTF stores mips smallest-first.
+function buildVTFGeneric(faces, size, flipRows, format, minSize) {
+    const mipChain = buildMipChain(faces, size, minSize);
+    const mipCount = mipChain.length;
+
     const headerSize = 64;
-    const faceBytes = faceByteSize(size, format);
-    const totalSize = headerSize + faceBytes * 7;
+    let bodySize = 0;
+    for (const level of mipChain) bodySize += faceByteSize(level.size, format) * 7;
+    const totalSize = headerSize + bodySize;
     const buf = new ArrayBuffer(totalSize);
     const dv = new DataView(buf);
     let o = 0;
@@ -649,38 +745,80 @@ function buildVTF(faces, size, flipRows, format) {
     wU32(7); wU32(1);
     wU32(headerSize);
     wU16(size); wU16(size);
-    const ENVMAP = 0x00004000, NOMIP = 0x00000100, NOLOD = 0x00000200;
-    wU32(ENVMAP | NOMIP | NOLOD);
+    // NOMIP dropped now that we actually ship mip levels; NOLOD kept so the
+    // engine always loads the full chain rather than picture-quality-scaling it down.
+    const ENVMAP = 0x00004000, NOLOD = 0x00000200;
+    wU32(ENVMAP | NOLOD);
     wU16(1); wU16(0);
     wU32(0);
     wF32(0.5); wF32(0.5); wF32(0.5);
     wU32(0);
     wF32(1.0);
     wU32(VTF_FORMATS[format]);
-    wU8(1);
+    wU8(mipCount);
     dv.setInt32(o, -1, true); o += 4;
     wU8(0); wU8(0);
     wU8(0);
 
-    const writeFace = (rawRgba) => {
-        let src = rawRgba;
-        if (flipRows) {
-            const rowBytes = size * 4;
-            const flipped = new Uint8ClampedArray(rawRgba.length);
-            for (let row = 0; row < size; row++) {
-                flipped.set(rawRgba.subarray(row * rowBytes, (row + 1) * rowBytes), (size - 1 - row) * rowBytes);
-            }
-            src = flipped;
-        }
-        const packed = packFace(src, size, format);
+    const writeFace = (rawRgba, faceSize) => {
+        const src = flipRows ? flipFaceRows(rawRgba, faceSize) : rawRgba;
+        const packed = packFace(src, faceSize, format);
+        const faceBytes = faceByteSize(faceSize, format);
         new Uint8Array(buf, o, faceBytes).set(packed);
         o += faceBytes;
     };
 
-    for (const face of FACES) writeFace(faces[face]);
-    writeFace(faces[FACES[0]]);
+    // Smallest mip first, largest last (VTF ordering).
+    for (let i = mipChain.length - 1; i >= 0; i--) {
+        const level = mipChain[i];
+        for (const face of FACES) writeFace(level.faces[face], level.size);
+        writeFace(level.faces[FACES[0]], level.size);
+    }
 
     return new Uint8Array(buf);
+}
+
+function buildVTF(faces, size, flipRows, format) {
+    const minSize = format === 'DXT1' ? 4 : 1;
+    return buildVTFGeneric(faces, size, flipRows, format, minSize);
+}
+
+// Same pixel data, repacked as RGBA16161616F (the HDR-capable format).
+// Per the wiki tip: shipping a matching "_env.hdr.vtf" is the fix for
+// sRGB-flagged cubemaps only displaying correctly when HDR is off / going
+// blown-out white when HDR is on — the engine picks this file instead of
+// misreading the SDR one under HDR rendering. We don't set an sRGB flag on
+// either file, so this SDR VTF alone should already be safe; the .hdr.vtf
+// is the belt-and-suspenders fix for maps/mods that force HDR.
+function buildVTFHDR(faces, size, flipRows) {
+    return buildVTFGeneric(faces, size, flipRows, 'RGBA16161616F', 1);
+}
+
+function downsampleFaceN(rgba, size, times) {
+    let cur = rgba, curSize = size;
+    for (let i = 0; i < times; i++) {
+        cur = downsampleFace(cur, curSize);
+        curSize /= 2;
+    }
+    return { faces: cur, size: curSize };
+}
+
+function shrinkFacesForHDR(faces, size, divisor) {
+    if (divisor <= 1) return { faces, size };
+    const times = Math.log2(divisor);
+    const outFaces = {};
+    let outSize = size;
+    for (const face of FACES) {
+        const r = downsampleFaceN(faces[face], size, times);
+        outFaces[face] = r.faces;
+        outSize = r.size;
+    }
+    return { faces: outFaces, size: outSize };
+}
+
+function getHdrSizeDivisor() {
+    const checked = document.querySelector('input[name="hdrSizeDiv"]:checked');
+    return checked ? parseInt(checked.value, 10) : 2;
 }
 
 function getMatPath() {
@@ -831,6 +969,20 @@ document.getElementById('dlVtf').addEventListener('click', () => {
     download(vtf, name, 'application/octet-stream');
 });
 
+const dlVtfHdrBtn = document.getElementById('dlVtfHdr');
+if (dlVtfHdrBtn) {
+    dlVtfHdrBtn.addEventListener('click', () => {
+        if (!generatedFaces) return;
+        const flip = getFlipRows();
+        const divisor = getHdrSizeDivisor();
+        const { faces: hdrFaces, size: hdrSize } = shrinkFacesForHDR(generatedFaces, generatedSize, divisor);
+        const vtf = buildVTFHDR(hdrFaces, hdrSize, flip);
+        const matPath = getMatPath();
+        const name = matPath.split('/').pop() + '_env.hdr.vtf';
+        download(vtf, name, 'application/octet-stream');
+    });
+}
+
 document.getElementById('dlPngZip').addEventListener('click', () => {
     if (!generatedFaces) return;
     const files = [];
@@ -848,7 +1000,8 @@ document.getElementById('dlPngZip').addEventListener('click', () => {
         files.push({ name: `matcap_${face}.png`, data: bytes });
     }
     const zip = buildZip(files);
-    download(zip, 'matcap_faces.zip', 'application/zip');
+    const matPath = getMatPath();
+    download(zip, matPath.split('/').pop() + '_faces.zip', 'application/zip');
 });
 
 const matcapScaleInput = document.getElementById('matcapScale');
