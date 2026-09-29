@@ -9,6 +9,10 @@ let genTimer = null;
 let isBallInteracting = false;
 let isSliderInteracting = false;
 
+// Back-face fill secondary data
+let backData = null, backW = 0, backH = 0, backBmp = null;
+let solidColorRgb = [26, 26, 26];
+
 const MAX_LAYERS = 16;
 const THUMB_PX = 128;      // thumbnail backing size (shown at 64 css px)
 
@@ -29,6 +33,9 @@ const rotZInput = document.getElementById('rotZ');
 const ballController = document.getElementById('ballController');
 const ballHandle = document.getElementById('ballHandle');
 
+const backColorPicker = document.getElementById('backColorPicker');
+const pipetteBtn = document.getElementById('pipetteBtn');
+
 function showStatus(text, duration = 3000) {
     const container = document.getElementById('toastContainer');
     if (!container) return;
@@ -41,7 +48,6 @@ function showStatus(text, duration = 3000) {
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
         </div>
     `;
-    // textContent: file names must never be interpreted as HTML.
     toast.querySelector('.toast-body').textContent = text;
     container.appendChild(toast);
     if (duration > 0) {
@@ -66,7 +72,6 @@ async function decodeImage(file) {
     try {
         return await createImageBitmap(file);
     } catch (e) {
-        // Fallback for formats createImageBitmap refuses (e.g. SVG).
         try {
             const url = URL.createObjectURL(file);
             const img = await new Promise((res, rej) => {
@@ -87,7 +92,6 @@ async function decodeImage(file) {
     }
 }
 
-// Draws any bitmap stretched to w×h and returns its RGBA pixels.
 const scratchCanvas = document.createElement('canvas');
 function rasterize(src, w, h) {
     scratchCanvas.width = w;
@@ -151,7 +155,7 @@ function createSlot({ caption = '', large = false, clearable = false, onFile, on
     });
     input.addEventListener('change', () => {
         const file = input.files[0];
-        input.value = '';   // lets the same file be picked again
+        input.value = '';
         if (file) onFile(file);
     });
     if (clearBtn) {
@@ -168,7 +172,7 @@ function createSlot({ caption = '', large = false, clearable = false, onFile, on
     slotEl.addEventListener('dragleave', () => slotEl.classList.remove('dragover'));
     slotEl.addEventListener('drop', e => {
         e.preventDefault();
-        e.stopPropagation();   // don't let the main-area handler also load it as the base
+        e.stopPropagation();
         slotEl.classList.remove('dragover');
         const file = e.dataTransfer.files[0];
         if (file) onFile(file);
@@ -177,7 +181,6 @@ function createSlot({ caption = '', large = false, clearable = false, onFile, on
     return api;
 }
 
-// Slider that renders a cheap draft while dragging and a full frame on release.
 function createSlider(label, { min, max, step, value }, onInput) {
     const row = document.createElement('div');
     row.className = 'slider-row';
@@ -215,7 +218,7 @@ const baseSlot = createSlot({ large: true, onFile: loadBase });
 baseSlotHost.appendChild(baseSlot.el);
 
 async function loadBase(file) {
-    const seq = ++baseSeq;                 // newest pick wins, older decodes are dropped
+    const seq = ++baseSeq;
     const bmp = await decodeImage(file);
     if (!bmp) return;
     if (seq !== baseSeq) { closeBmp(bmp); return; }
@@ -230,10 +233,9 @@ async function loadBase(file) {
     baseDims.textContent = `${w} × ${h}`;
     baseInfo.hidden = false;
 
-    // Layers are resampled to the base resolution.
     layers.forEach(l => rebuildCache(l));
     compositeDirty = true;
-    ensureComposite();          // srcData must exist before the first generation
+    ensureComposite();
 
     generateBtn.disabled = false;
     showStatus(`Loaded: ${file.name} (${w}×${h})`);
@@ -241,10 +243,89 @@ async function loadBase(file) {
 }
 
 // ------------------------------------------------------------------
+// Back-face second matcap
+// ------------------------------------------------------------------
+const backMatcapSlot = createSlot({
+    caption: 'Back Matcap',
+    clearable: true,
+    onFile: loadBackMatcap,
+    onClear: clearBackMatcap
+});
+const backMatcapSlotHost = document.getElementById('backMatcapSlotHost');
+if (backMatcapSlotHost) {
+    backMatcapSlotHost.appendChild(backMatcapSlot.el);
+}
+
+async function loadBackMatcap(file) {
+    const bmp = await decodeImage(file);
+    if (!bmp) return;
+    closeBmp(backBmp);
+    backBmp = bmp;
+    backW = bmp.width;
+    backH = bmp.height;
+    backData = new Uint8ClampedArray(rasterize(bmp, backW, backH));
+    backMatcapSlot.setPreview(bmp);
+    showStatus(`Back matcap loaded: ${file.name}`);
+    scheduleRender(true);
+}
+
+function clearBackMatcap() {
+    closeBmp(backBmp);
+    backBmp = null;
+    backData = null;
+    backW = 0;
+    backH = 0;
+    backMatcapSlot.clear();
+    scheduleRender(true);
+}
+
+// ------------------------------------------------------------------
+// Solid color helpers
+// ------------------------------------------------------------------
+function hexToRgb(hex) {
+    hex = hex.replace(/^#/, '');
+    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+    const num = parseInt(hex, 16);
+    return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+function setSolidColor(hex, renderFinal = true) {
+    if (!hex) return;
+    if (backColorPicker) backColorPicker.value = hex;
+    const hexSpan = document.getElementById('backColorHex');
+    if (hexSpan) hexSpan.textContent = hex;
+    solidColorRgb = hexToRgb(hex);
+    scheduleRender(renderFinal);
+}
+
+if (backColorPicker) {
+    backColorPicker.addEventListener('input', () => setSolidColor(backColorPicker.value, false));
+    backColorPicker.addEventListener('change', () => setSolidColor(backColorPicker.value, true));
+}
+
+if (pipetteBtn) {
+    pipetteBtn.addEventListener('click', async () => {
+        if (window.EyeDropper) {
+            try {
+                const eyeDropper = new EyeDropper();
+                const res = await eyeDropper.open();
+                if (res && res.sRGBHex) {
+                    setSolidColor(res.sRGBHex, true);
+                }
+            } catch (err) {
+                // Cancelled by user
+            }
+        } else if (backColorPicker) {
+            backColorPicker.click();
+        }
+    });
+}
+
+// ------------------------------------------------------------------
 // Layers: each one is an extra matcap + blend mode + opacity,
 // composited over the base in list order.
 // ------------------------------------------------------------------
-const layers = [];   // { id, matcap, matcapPx, blendMode, opacity, seq, removed }
+const layers = [];
 let nextLayerId = 1;
 
 function rebuildCache(layer) {
@@ -326,7 +407,7 @@ async function setLayerImage(layer, slot, file) {
 }
 
 function clearLayerImage(layer) {
-    layer.seq = (layer.seq || 0) + 1;   // cancels pending decode
+    layer.seq = (layer.seq || 0) + 1;
     closeBmp(layer.matcap);
     layer.matcap = null;
     layer.matcapPx = null;
@@ -453,7 +534,6 @@ appMain.addEventListener('drop', e => {
     const file = e.dataTransfer.files[0];
     if (file) loadBase(file);
 });
-// A missed drop must not navigate the page to the image.
 window.addEventListener('dragover', e => e.preventDefault());
 window.addEventListener('drop', e => e.preventDefault());
 
@@ -573,9 +653,24 @@ if (backBlurStrengthInput) {
     backBlurStrengthInput.addEventListener('change', stopBackBlurInput);
 }
 
+function updateBackFillUI() {
+    const mode = getBackFillMode();
+    const colorArea = document.getElementById('backColorArea');
+    const matcapArea = document.getElementById('backMatcapArea');
+    const fadeArea = document.getElementById('backFadeRateArea');
+
+    if (colorArea) colorArea.style.display = mode === 'color' ? 'block' : 'none';
+    if (matcapArea) matcapArea.style.display = mode === 'matcap' ? 'block' : 'none';
+    if (fadeArea) fadeArea.style.display = mode === 'matcap' ? 'none' : 'block';
+}
+
 document.querySelectorAll('input[name="backFill"]').forEach(input => {
-    input.addEventListener('change', () => scheduleRender(true));
+    input.addEventListener('change', () => {
+        updateBackFillUI();
+        scheduleRender(true);
+    });
 });
+updateBackFillUI();
 
 function getBackFillMode() {
     const checked = document.querySelector('input[name="backFill"]:checked');
@@ -664,7 +759,51 @@ function faceDir(face, a, b) {
 }
 
 function sampleMatcap(u, v) {
+    const nu = (u - 0.5) * 2;
+    const nv = (v - 0.5) * 2;
+    const r = Math.sqrt(nu * nu + nv * nv);
+    if (r > 0.995) {
+        const k = 0.995 / r;
+        u = 0.5 + nu * k * 0.5;
+        v = 0.5 + nv * k * 0.5;
+    }
     return bilinear(u, v);
+}
+
+function sampleBackMatcap(u, v) {
+    if (!backData) return [0, 0, 0, 255];
+    const nu = (u - 0.5) * 2;
+    const nv = (v - 0.5) * 2;
+    const r = Math.sqrt(nu * nu + nv * nv);
+    if (r > 0.995) {
+        const k = 0.995 / r;
+        u = 0.5 + nu * k * 0.5;
+        v = 0.5 + nv * k * 0.5;
+    }
+    u = Math.min(Math.max(u, 0), 1);
+    v = Math.min(Math.max(v, 0), 1);
+    const x = u * (backW - 1), y = v * (backH - 1);
+    const x0 = Math.floor(x), x1 = Math.min(x0 + 1, backW - 1);
+    const y0 = Math.floor(y), y1 = Math.min(y0 + 1, backH - 1);
+    const fx = x - x0, fy = y - y0;
+    const idx = (xx, yy) => (yy * backW + xx) * 4;
+    const out = [0, 0, 0, 255];
+    for (let ch = 0; ch < 3; ch++) {
+        const c00 = backData[idx(x0, y0) + ch], c10 = backData[idx(x1, y0) + ch];
+        const c01 = backData[idx(x0, y1) + ch], c11 = backData[idx(x1, y1) + ch];
+        const top = c00 * (1 - fx) + c10 * fx;
+        const bot = c01 * (1 - fx) + c11 * fx;
+        out[ch] = top * (1 - fy) + bot * fy;
+    }
+    return out;
+}
+
+function sampleBackFast(u, v) {
+    if (!backData) return [0, 0, 0, 255];
+    const x = Math.min(Math.max((u * backW) | 0, 0), backW - 1);
+    const y = Math.min(Math.max((v * backH) | 0, 0), backH - 1);
+    const idx = (y * backW + x) * 4;
+    return [backData[idx], backData[idx + 1], backData[idx + 2], 255];
 }
 
 function buildDiscClampedSource() {
@@ -764,15 +903,6 @@ function smoothstep01(t) {
 
 function sampleBackHemisphere(filler, u, v, dx, mode, strength) {
     const t = smoothstep01(-dx * strength);
-    if (mode === 'flat') {
-        const sharp = bilinearLevel(filler.pyramid[0], u, v);
-        return [
-            sharp[0] * (1 - t) + filler.flatColor[0] * t,
-            sharp[1] * (1 - t) + filler.flatColor[1] * t,
-            sharp[2] * (1 - t) + filler.flatColor[2] * t,
-            255
-        ];
-    }
     const maxLevel = filler.pyramid.length - 1;
     const levelFloat = Math.pow(t, 1.3) * maxLevel;
     return sampleMipTrilinear(filler.pyramid, u, v, levelFloat);
@@ -805,12 +935,16 @@ function generateFaces(size, isFast = false) {
     ensureComposite();
     const result = {};
     const { rx, ry, rz } = getRotations();
-    const backFillMode = isFast ? 'blur' : getBackFillMode();
+    const backFillMode = getBackFillMode();
     const backStrength = isFast ? 1.0 : getBackBlurStrength();
-    const backFiller = isFast ? null : buildBackFiller();
     const globalSoftness = isFast ? 0 : getGlobalSoftness();
-    
     const scale = getMatcapScale();
+
+    const effectiveBackMode = (backFillMode === 'matcap' && !backData) ? 'blur' : backFillMode;
+    const needPyramid = !isFast && (effectiveBackMode === 'blur' || globalSoftness > 0);
+    const backFiller = needPyramid ? buildBackFiller() : null;
+
+    const SEAM_HALF = 0.12;
 
     for (const face of FACES) {
         const buf = new Uint8ClampedArray(size * size * 4);
@@ -827,36 +961,71 @@ function generateFaces(size, isFast = false) {
 
                 [dx, dy, dz] = rotateVector(dx, dy, dz, rx, ry, rz);
 
-                const u = 0.5 - (dz * 0.5) / scale;
-                const v = 0.5 - (dy * 0.5) / scale;
+                const u_front = 0.5 - (dz * 0.5) / scale;
+                const v_front = 0.5 - (dy * 0.5) / scale;
                 
                 let color;
-                
-                if (isFast) {
-                    color = sampleFast(u, v);
-                } else if (dx < 0) {
-                    color = sampleBackHemisphere(backFiller, u, v, dx, backFillMode, backStrength);
-                } else {
-                    color = sampleMatcap(u, v);
-                }
 
-                if (!isFast) {
-                    const SEAM_HALF_WIDTH = 0.16;
-                    const seamT = 1 - smoothstep01(Math.abs(dx) / SEAM_HALF_WIDTH);
-                    if (seamT > 0) {
-                        const seamSample = sampleMipTrilinear(backFiller.pyramid, u, v, 3.0);
+                if (effectiveBackMode === 'matcap') {
+                    const u_back = 0.5 + (dz * 0.5) / scale;
+                    const v_back = 0.5 - (dy * 0.5) / scale;
+
+                    if (dx > SEAM_HALF) {
+                        color = isFast ? sampleFast(u_front, v_front) : sampleMatcap(u_front, v_front);
+                    } else if (dx < -SEAM_HALF) {
+                        color = isFast ? sampleBackFast(u_back, v_back) : sampleBackMatcap(u_back, v_back);
+                    } else {
+                        const t = smoothstep01((-dx + SEAM_HALF) / (2 * SEAM_HALF));
+                        const cFront = isFast ? sampleFast(u_front, v_front) : sampleMatcap(u_front, v_front);
+                        const cBack = isFast ? sampleBackFast(u_back, v_back) : sampleBackMatcap(u_back, v_back);
                         color = [
-                            color[0] * (1 - seamT) + seamSample[0] * seamT,
-                            color[1] * (1 - seamT) + seamSample[1] * seamT,
-                            color[2] * (1 - seamT) + seamSample[2] * seamT,
+                            cFront[0] * (1 - t) + cBack[0] * t,
+                            cFront[1] * (1 - t) + cBack[1] * t,
+                            cFront[2] * (1 - t) + cBack[2] * t,
                             255
                         ];
                     }
+                } else if (effectiveBackMode === 'color') {
+                    if (dx >= 0) {
+                        color = isFast ? sampleFast(u_front, v_front) : sampleMatcap(u_front, v_front);
+                    } else {
+                        const t = smoothstep01(-dx * backStrength);
+                        const cFront = isFast ? sampleFast(u_front, v_front) : sampleMatcap(u_front, v_front);
+                        color = [
+                            cFront[0] * (1 - t) + solidColorRgb[0] * t,
+                            cFront[1] * (1 - t) + solidColorRgb[1] * t,
+                            cFront[2] * (1 - t) + solidColorRgb[2] * t,
+                            255
+                        ];
+                    }
+                } else {
+                    // Blur mirror mode
+                    if (isFast) {
+                        color = sampleFast(u_front, v_front);
+                    } else if (dx < 0) {
+                        color = sampleBackHemisphere(backFiller, u_front, v_front, dx, 'blur', backStrength);
+                    } else {
+                        color = sampleMatcap(u_front, v_front);
+                    }
+
+                    if (!isFast && backFiller) {
+                        const SEAM_HALF_WIDTH = 0.16;
+                        const seamT = 1 - smoothstep01(Math.abs(dx) / SEAM_HALF_WIDTH);
+                        if (seamT > 0) {
+                            const seamSample = sampleMipTrilinear(backFiller.pyramid, u_front, v_front, 3.0);
+                            color = [
+                                color[0] * (1 - seamT) + seamSample[0] * seamT,
+                                color[1] * (1 - seamT) + seamSample[1] * seamT,
+                                color[2] * (1 - seamT) + seamSample[2] * seamT,
+                                255
+                            ];
+                        }
+                    }
                 }
 
-                if (!isFast && globalSoftness > 0) {
+                if (!isFast && globalSoftness > 0 && backFiller) {
                     const maxLevel = backFiller.pyramid.length - 1;
-                    const soft = sampleMipTrilinear(backFiller.pyramid, u, v, globalSoftness * maxLevel);
+                    const soft = sampleMipTrilinear(backFiller.pyramid, u_front, v_front, globalSoftness * maxLevel);
                     color = [
                         color[0] * (1 - globalSoftness) + soft[0] * globalSoftness,
                         color[1] * (1 - globalSoftness) + soft[1] * globalSoftness,
@@ -907,7 +1076,6 @@ const VTF_FORMATS = {
     RGBA16161616F: 24,
 };
 
-// Minimal IEEE-754 half-float encoder (values expected in the 0..1 range).
 function toHalfFloat(value) {
     const floatView = new Float32Array(1);
     const int32View = new Uint32Array(floatView.buffer);

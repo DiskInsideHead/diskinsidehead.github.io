@@ -258,7 +258,6 @@
             <aside class="app-sidebar">
                 <div id="drop-area">
                     <h2>Matcap → EnvMap</h2>
-                    <p class="note-text mb-2">Unwraps a matcap sphere into a 6-face cubemap and builds a ready .vtf</p>
                 </div>
 
                 <div class="settings-area p-3 border rounded bg-light">
@@ -273,7 +272,6 @@
                 </div>
 
                 <h3 class="section-title">Extra matcap layers</h3>
-                <p class="note-text mb-2">Layers are blended over the base in list order (Layer 1 first, the last one on top). Select a blend mode and adjust opacity.</p>
                 <div id="layersContainer"></div>
                 <button type="button" class="btn btn-outline-primary btn-sm w-100 mb-3" id="addLayerBtn">+ Add layer</button>
 
@@ -325,19 +323,51 @@
                     </fieldset>
                     <h3>Back-face fill</h3>
                     <fieldset title="A single matcap only ever shows the front hemisphere of the sphere. This controls how the unseen back is filled in.">
-                        <div class="btn-group w-100 mb-2" role="group">
+                        <div class="btn-group w-100 mb-3" role="group">
                             <input checked class="btn-check" id="backfill-blur" name="backFill" type="radio" value="blur">
                             <label class="btn btn-outline-primary" for="backfill-blur">Blur mirror</label>
 
-                            <input class="btn-check" id="backfill-flat" name="backFill" type="radio" value="flat">
-                            <label class="btn btn-outline-primary" for="backfill-flat">Flat color</label>
+                            <input class="btn-check" id="backfill-color" name="backFill" type="radio" value="color">
+                            <label class="btn btn-outline-primary" for="backfill-color">Solid color</label>
+
+                            <input class="btn-check" id="backfill-matcap" name="backFill" type="radio" value="matcap">
+                            <label class="btn btn-outline-primary" for="backfill-matcap">Matcap</label>
                         </div>
                     </fieldset>
-                    <div class="d-flex justify-content-between small text-muted">
-                        <label for="backBlurStrength" class="form-label mb-0">Fade rate:</label>
-                        <span><strong id="backBlurStrengthVal">1.0</strong>×</span>
+
+                    <!-- Controls for Solid Color -->
+                    <div id="backColorArea" class="mb-3" style="display: none;">
+                        <label class="form-label small text-muted mb-1">Color:</label>
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="color" class="form-control form-control-color" id="backColorPicker" value="#1a1a1a" title="Choose color">
+                            <button type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" id="pipetteBtn" title="Pick color with eyedropper">
+                                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"/>
+                                </svg>
+                                <span>Pipette</span>
+                            </button>
+                            <span class="small text-muted font-monospace" id="backColorHex">#1a1a1a</span>
+                        </div>
                     </div>
-                    <input type="range" class="form-range" id="backBlurStrength" min="0.4" max="2.5" step="0.1" value="1.0">
+
+                    <!-- Controls for Second Matcap -->
+                    <div id="backMatcapArea" class="mb-3" style="display: none;">
+                        <div class="d-flex align-items-center gap-3">
+                            <div id="backMatcapSlotHost"></div>
+                            <div class="small text-muted">
+                                Matcap image for the back hemisphere
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Fade rate slider (shown for blur and color) -->
+                    <div id="backFadeRateArea">
+                        <div class="d-flex justify-content-between small text-muted">
+                            <label for="backBlurStrength" class="form-label mb-0">Fade rate:</label>
+                            <span><strong id="backBlurStrengthVal">1.0</strong>×</span>
+                        </div>
+                        <input type="range" class="form-range" id="backBlurStrength" min="0.4" max="2.5" step="0.1" value="1.0">
+                    </div>
                 </div>
 
                 <div class="settings-area p-3 border rounded bg-light">
@@ -348,7 +378,6 @@
                             <span><strong id="globalSoftnessVal">0</strong>%</span>
                         </div>
                         <input type="range" class="form-range" id="globalSoftness" min="0" max="100" step="5" value="0">
-                        <p class="note-text mb-0">Blurs the whole cubemap (incl. the sharp front) to make the unavoidable mirror-symmetry on side faces less obvious. 0 = off, fully sharp.</p>
                     </fieldset>
                 </div>
 
