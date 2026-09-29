@@ -48,6 +48,7 @@
                 background: #fff;
                 padding-top: 10px;
                 margin-top: 6px;
+                z-index: 10;
             }
             .app-main {
                 flex: 1;
@@ -63,12 +64,98 @@
                 width: 100%;
                 max-width: 760px;
             }
+            [hidden] { display: none !important; }
             .main-placeholder {
-                color: #999;
+                margin-top: 10vh;
+                min-height: 40vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
                 text-align: center;
-                margin-top: 18vh;
+                border: 2px dashed #ced4da;
+                border-radius: 12px;
+                color: #868e96;
                 font-size: 15px;
+                cursor: pointer;
+                transition: border-color .15s, color .15s, background .15s;
             }
+            .main-placeholder:hover, .main-placeholder:focus-visible, .main-placeholder.dragover {
+                border-color: #286090;
+                color: #286090;
+                background: #f3f7fb;
+                outline: none;
+            }
+
+            /* ---------- Square image slots ---------- */
+            .slot-wrap {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 4px;
+            }
+            .slot {
+                position: relative;
+                width: 64px;
+                height: 64px;
+                flex: none;
+                border-radius: 8px;
+                border: 1px dashed #adb5bd;
+                background: #e9ecef;
+                cursor: pointer;
+                overflow: hidden;
+            }
+            .slot.slot-lg { width: 80px; height: 80px; }
+            .slot::before {
+                content: '+';
+                position: absolute;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 24px;
+                color: #868e96;
+            }
+            .slot canvas { display: none; width: 100%; height: 100%; }
+            .slot.filled { border: 1px solid #dee2e6; background: #1a1a2e; }
+            .slot.filled::before { content: none; }
+            .slot.filled canvas { display: block; }
+            .slot:hover, .slot:focus-visible, .slot.dragover {
+                border-color: #286090;
+                outline: none;
+            }
+            .slot.dragover { background: #dbe7f3; }
+            .slot-clear {
+                position: absolute;
+                top: 2px;
+                right: 2px;
+                width: 18px;
+                height: 18px;
+                padding: 0;
+                border: 0;
+                border-radius: 50%;
+                background: rgba(0, 0, 0, .65);
+                color: #fff;
+                font-size: 13px;
+                line-height: 18px;
+                text-align: center;
+                cursor: pointer;
+                display: none;
+            }
+            .slot.filled:hover .slot-clear,
+            .slot.filled:focus-within .slot-clear { display: block; }
+            .slot-caption { font-size: .75rem; color: #6c757d; }
+
+            .base-row { display: flex; align-items: center; gap: 12px; }
+            .base-info { min-width: 0; font-size: .85rem; }
+            .base-name {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                font-weight: 600;
+            }
+            .base-dims { color: #6c757d; }
+            .slider-row + .slider-row { margin-top: 4px; }
+            .section-title { font-size: 1rem; margin: 16px 0 6px; }
             @media (max-width: 900px) {
                 html, body {
                     height: auto;
@@ -173,7 +260,22 @@
                     <h2>Matcap → EnvMap</h2>
                     <p class="note-text mb-2">Unwraps a matcap sphere into a 6-face cubemap and builds a ready .vtf</p>
                 </div>
-                <input accept="image/*" class="form-control mb-3" id="imageInput" type="file">
+
+                <div class="settings-area p-3 border rounded bg-light">
+                    <h3>Base matcap</h3>
+                    <div class="base-row">
+                        <div id="baseSlotHost"></div>
+                        <div class="base-info" id="baseInfo" hidden>
+                            <div class="base-name" id="baseName"></div>
+                            <div class="base-dims" id="baseDims"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <h3 class="section-title">Extra matcap layers</h3>
+                <p class="note-text mb-2">Layers are blended over the base in list order (Layer 1 first, the last one on top). Select a blend mode and adjust opacity.</p>
+                <div id="layersContainer"></div>
+                <button type="button" class="btn btn-outline-primary btn-sm w-100 mb-3" id="addLayerBtn">+ Add layer</button>
 
                 <label for="matPath" class="form-label mb-1">Имя файла</label>
                 <input class="form-control mb-3" id="matPath" type="text" value="material" placeholder="material">
@@ -299,8 +401,8 @@
                 </div>
             </aside>
 
-            <main class="app-main">
-                <p class="main-placeholder" id="mainPlaceholder">Waiting for Matcap...</p>
+            <main class="app-main" id="appMain">
+                <div class="main-placeholder" id="mainPlaceholder" role="button" tabindex="0">Drop or click to load a base matcap</div>
 
                 <div id="resultArea" style="display:none">
                     <h3>Cubemap faces</h3>

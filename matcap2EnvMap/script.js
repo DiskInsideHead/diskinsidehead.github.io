@@ -1,13 +1,27 @@
+// srcData = what the generator samples: base matcap with all layers composited on top.
+// baseData = the untouched base matcap pixels.
 let srcData = null, srcW = 0, srcH = 0;
+let baseData = null;
+let compositeDirty = false;
 let generatedFaces = null, generatedSize = 0;
 let renderTimeout = null;
+let genTimer = null;
 let isBallInteracting = false;
 let isSliderInteracting = false;
 
-const imageInput = document.getElementById('imageInput');
-const dropArea = document.getElementById('drop-area');
+const MAX_LAYERS = 16;
+const THUMB_PX = 128;      // thumbnail backing size (shown at 64 css px)
+
 const generateBtn = document.getElementById('generateBtn');
 const resultArea = document.getElementById('resultArea');
+const appMain = document.getElementById('appMain');
+const mainPlaceholder = document.getElementById('mainPlaceholder');
+const baseSlotHost = document.getElementById('baseSlotHost');
+const baseInfo = document.getElementById('baseInfo');
+const baseName = document.getElementById('baseName');
+const baseDims = document.getElementById('baseDims');
+const layersContainer = document.getElementById('layersContainer');
+const addLayerBtn = document.getElementById('addLayerBtn');
 
 const rotXInput = document.getElementById('rotX');
 const rotYInput = document.getElementById('rotY');
@@ -23,10 +37,12 @@ function showStatus(text, duration = 3000) {
     toast.role = 'alert';
     toast.innerHTML = `
         <div class="d-flex">
-            <div class="toast-body py-2 px-3">${text}</div>
+            <div class="toast-body py-2 px-3"></div>
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
         </div>
     `;
+    // textContent: file names must never be interpreted as HTML.
+    toast.querySelector('.toast-body').textContent = text;
     container.appendChild(toast);
     if (duration > 0) {
         setTimeout(() => {
@@ -36,50 +52,412 @@ function showStatus(text, duration = 3000) {
     }
 }
 
-function handleFile(file) {
-    if (!file || !file.type.startsWith('image/')) {
-        showStatus('Error: Please upload a valid image file.');
-        return;
+// ------------------------------------------------------------------
+// Image decoding / rasterizing
+// ------------------------------------------------------------------
+const isImageFile = f => !!f && (f.type.startsWith('image/') || /\.(png|jpe?g|webp|bmp|gif|avif)$/i.test(f.name));
+const closeBmp = b => { if (b && typeof b.close === 'function') b.close(); };
+
+async function decodeImage(file) {
+    if (!isImageFile(file)) {
+        showStatus(`Error: "${file.name}" is not an image.`);
+        return null;
     }
-    const img = new Image();
-    img.onload = () => {
-        const c = document.createElement('canvas');
-        c.width = img.width; c.height = img.height;
-        const ctx = c.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        const id = ctx.getImageData(0, 0, img.width, img.height);
-        srcData = id.data; srcW = img.width; srcH = img.height;
-        generateBtn.disabled = false;
-        showStatus(`Loaded: ${file.name} (${img.width}×${img.height})`);
-        runGeneration(false);
+    try {
+        return await createImageBitmap(file);
+    } catch (e) {
+        // Fallback for formats createImageBitmap refuses (e.g. SVG).
+        try {
+            const url = URL.createObjectURL(file);
+            const img = await new Promise((res, rej) => {
+                const i = new Image();
+                i.onload = () => res(i);
+                i.onerror = rej;
+                i.src = url;
+            });
+            URL.revokeObjectURL(url);
+            const c = document.createElement('canvas');
+            c.width = img.naturalWidth; c.height = img.naturalHeight;
+            c.getContext('2d').drawImage(img, 0, 0);
+            return c;
+        } catch (e2) {
+            showStatus(`Error: can't read "${file.name}" as an image.`);
+            return null;
+        }
+    }
+}
+
+// Draws any bitmap stretched to w×h and returns its RGBA pixels.
+const scratchCanvas = document.createElement('canvas');
+function rasterize(src, w, h) {
+    scratchCanvas.width = w;
+    scratchCanvas.height = h;
+    const ctx = scratchCanvas.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingQuality = 'high';
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(src, 0, 0, w, h);
+    return ctx.getImageData(0, 0, w, h).data;
+}
+
+// ------------------------------------------------------------------
+// Slots: square, click-or-drop image pickers with a cropped thumbnail
+// ------------------------------------------------------------------
+function drawCover(ctx, bmp, size) {
+    const s = Math.max(size / bmp.width, size / bmp.height);
+    const dw = bmp.width * s, dh = bmp.height * s;
+    ctx.clearRect(0, 0, size, size);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bmp, (size - dw) / 2, (size - dh) / 2, dw, dh);
+}
+
+function createSlot({ caption = '', large = false, clearable = false, onFile, onClear }) {
+    const wrap = document.createElement('div');
+    wrap.className = 'slot-wrap';
+    wrap.innerHTML = `
+        <div class="slot${large ? ' slot-lg' : ''}" tabindex="0" role="button" title="Click or drop an image">
+            <canvas width="${THUMB_PX}" height="${THUMB_PX}"></canvas>
+            ${clearable ? '<button type="button" class="slot-clear" title="Remove" aria-label="Remove">×</button>' : ''}
+        </div>
+        ${caption ? `<div class="slot-caption">${caption}</div>` : ''}
+        <input type="file" hidden accept="image/*">`;
+
+    const slotEl = wrap.querySelector('.slot');
+    const ctx = wrap.querySelector('canvas').getContext('2d');
+    const input = wrap.querySelector('input');
+    const clearBtn = wrap.querySelector('.slot-clear');
+
+    const api = {
+        el: wrap,
+        open: () => input.click(),
+        setPreview(bmp) {
+            drawCover(ctx, bmp, THUMB_PX);
+            slotEl.classList.add('filled');
+        },
+        clear() {
+            ctx.clearRect(0, 0, THUMB_PX, THUMB_PX);
+            slotEl.classList.remove('filled');
+        }
     };
-    img.src = URL.createObjectURL(file);
-}
 
-imageInput.addEventListener('change', () => {
-    if (imageInput.files && imageInput.files[0]) handleFile(imageInput.files[0]);
-});
-
-['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-    document.addEventListener(eventName, (e) => {
+    slotEl.addEventListener('click', e => {
+        if (e.target.closest('.slot-clear')) return;
+        input.click();
+    });
+    slotEl.addEventListener('keydown', e => {
+        if (e.target === slotEl && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault();
+            input.click();
+        }
+    });
+    input.addEventListener('change', () => {
+        const file = input.files[0];
+        input.value = '';   // lets the same file be picked again
+        if (file) onFile(file);
+    });
+    if (clearBtn) {
+        clearBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            api.clear();
+            if (onClear) onClear();
+        });
+    }
+    slotEl.addEventListener('dragover', e => {
         e.preventDefault();
-        e.stopPropagation();
-    }, false);
-});
-
-if (dropArea) {
-    ['dragenter', 'dragover'].forEach(eventName => {
-        dropArea.addEventListener(eventName, () => dropArea.classList.add('drag-active'), false);
+        slotEl.classList.add('dragover');
     });
-    ['dragleave', 'drop'].forEach(eventName => {
-        dropArea.addEventListener(eventName, () => dropArea.classList.remove('drag-active'), false);
+    slotEl.addEventListener('dragleave', () => slotEl.classList.remove('dragover'));
+    slotEl.addEventListener('drop', e => {
+        e.preventDefault();
+        e.stopPropagation();   // don't let the main-area handler also load it as the base
+        slotEl.classList.remove('dragover');
+        const file = e.dataTransfer.files[0];
+        if (file) onFile(file);
+    });
+
+    return api;
+}
+
+// Slider that renders a cheap draft while dragging and a full frame on release.
+function createSlider(label, { min, max, step, value }, onInput) {
+    const row = document.createElement('div');
+    row.className = 'slider-row';
+    row.innerHTML = `
+        <div class="d-flex justify-content-between small text-muted">
+            <span>${label}</span><strong class="val">${value.toFixed(2)}</strong>
+        </div>
+        <input type="range" class="form-range" min="${min}" max="${max}" step="${step}" value="${value}">`;
+    const input = row.querySelector('input');
+    const val = row.querySelector('.val');
+    input.addEventListener('pointerdown', () => { isSliderInteracting = true; });
+    input.addEventListener('input', () => {
+        const v = parseFloat(input.value);
+        val.textContent = v.toFixed(2);
+        onInput(v);
+        scheduleRender();
+    });
+    const stop = () => {
+        if (isSliderInteracting) {
+            isSliderInteracting = false;
+            scheduleRender(true);
+        }
+    };
+    input.addEventListener('pointerup', stop);
+    input.addEventListener('pointercancel', stop);
+    input.addEventListener('change', stop);
+    return row;
+}
+
+// ------------------------------------------------------------------
+// Base matcap
+// ------------------------------------------------------------------
+let baseSeq = 0;
+const baseSlot = createSlot({ large: true, onFile: loadBase });
+baseSlotHost.appendChild(baseSlot.el);
+
+async function loadBase(file) {
+    const seq = ++baseSeq;                 // newest pick wins, older decodes are dropped
+    const bmp = await decodeImage(file);
+    if (!bmp) return;
+    if (seq !== baseSeq) { closeBmp(bmp); return; }
+
+    const w = bmp.width, h = bmp.height;
+    baseData = new Uint8ClampedArray(rasterize(bmp, w, h));
+    srcW = w; srcH = h;
+    baseSlot.setPreview(bmp);
+    closeBmp(bmp);
+
+    baseName.textContent = file.name;
+    baseDims.textContent = `${w} × ${h}`;
+    baseInfo.hidden = false;
+
+    // Layers are resampled to the base resolution.
+    layers.forEach(l => rebuildCache(l));
+    compositeDirty = true;
+    ensureComposite();          // srcData must exist before the first generation
+
+    generateBtn.disabled = false;
+    showStatus(`Loaded: ${file.name} (${w}×${h})`);
+    runGeneration(false);
+}
+
+// ------------------------------------------------------------------
+// Layers: each one is an extra matcap + blend mode + opacity,
+// composited over the base in list order.
+// ------------------------------------------------------------------
+const layers = [];   // { id, matcap, matcapPx, blendMode, opacity, seq, removed }
+let nextLayerId = 1;
+
+function rebuildCache(layer) {
+    const bmp = layer.matcap;
+    layer.matcapPx = bmp && baseData ? rasterize(bmp, srcW, srcH) : null;
+}
+
+function getBlendFn(mode) {
+    switch (mode) {
+        case 'multiply':
+            return (b, l) => b * l;
+        case 'screen':
+            return (b, l) => 1 - (1 - b) * (1 - l);
+        case 'overlay':
+            return (b, l) => (b < 0.5 ? 2 * b * l : 1 - 2 * (1 - b) * (1 - l));
+        case 'hard-light':
+            return (b, l) => (l < 0.5 ? 2 * b * l : 1 - 2 * (1 - b) * (1 - l));
+        case 'add':
+            return (b, l) => Math.min(1, b + l);
+        case 'soft-light':
+            return (b, l) => (l <= 0.5 ? b - (1 - 2 * l) * b * (1 - b) : b + (2 * l - 1) * (Math.sqrt(Math.max(0, b)) - b));
+        case 'darken':
+            return (b, l) => Math.min(b, l);
+        case 'lighten':
+            return (b, l) => Math.max(b, l);
+        case 'difference':
+            return (b, l) => Math.abs(b - l);
+        case 'normal':
+        default:
+            return (b, l) => l;
+    }
+}
+
+function ensureComposite() {
+    if (!baseData || !compositeDirty) return;
+    compositeDirty = false;
+    const active = layers.filter(l => l.matcapPx && l.opacity > 0);
+    if (!active.length) { srcData = baseData; return; }
+
+    const out = new Uint8ClampedArray(baseData);
+    const n = srcW * srcH;
+    for (const l of active) {
+        const px = l.matcapPx, op = l.opacity, mode = l.blendMode || 'normal';
+        const blendFn = getBlendFn(mode);
+        for (let i = 0, j = 0; i < n; i++, j += 4) {
+            const a = (px[j + 3] / 255) * op;
+            if (a <= 0) continue;
+
+            const bR = out[j] / 255, bG = out[j + 1] / 255, bB = out[j + 2] / 255;
+            const lR = px[j] / 255,  lG = px[j + 1] / 255,  lB = px[j + 2] / 255;
+
+            const rR = blendFn(bR, lR);
+            const rG = blendFn(bG, lG);
+            const rB = blendFn(bB, lB);
+
+            out[j]     += (rR * 255 - out[j])     * a;
+            out[j + 1] += (rG * 255 - out[j + 1]) * a;
+            out[j + 2] += (rB * 255 - out[j + 2]) * a;
+        }
+    }
+    srcData = out;
+}
+
+function layersChanged() {
+    compositeDirty = true;
+    scheduleRender(true);
+}
+
+async function setLayerImage(layer, slot, file) {
+    const seq = (layer.seq = (layer.seq || 0) + 1);
+    const bmp = await decodeImage(file);
+    if (!bmp) return;
+    if (layer.removed || seq !== layer.seq) { closeBmp(bmp); return; }
+    closeBmp(layer.matcap);
+    layer.matcap = bmp;
+    slot.setPreview(bmp);
+    rebuildCache(layer);
+    layersChanged();
+}
+
+function clearLayerImage(layer) {
+    layer.seq = (layer.seq || 0) + 1;   // cancels pending decode
+    closeBmp(layer.matcap);
+    layer.matcap = null;
+    layer.matcapPx = null;
+    layersChanged();
+}
+
+function renumberLayers() {
+    [...layersContainer.children].forEach((card, i) => {
+        card.querySelector('.layer-title').textContent = `Layer ${i + 1}`;
     });
 }
 
-document.addEventListener('drop', (e) => {
-    const dt = e.dataTransfer;
-    if (dt && dt.files && dt.files.length > 0) handleFile(dt.files[0]);
+function updateAddLayerState() {
+    addLayerBtn.disabled = layers.length >= MAX_LAYERS;
+    addLayerBtn.title = addLayerBtn.disabled ? `Up to ${MAX_LAYERS} layers` : '';
+}
+
+function createLayerCard(layer) {
+    const card = document.createElement('div');
+    card.className = 'settings-area p-3 border rounded bg-light layer-card';
+    card.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h3 class="layer-title mb-0">Layer</h3>
+            <button type="button" class="btn btn-sm btn-outline-danger remove-layer-btn" title="Remove layer" aria-label="Remove layer">×</button>
+        </div>
+        <div class="d-flex align-items-center gap-3 mb-2">
+            <div class="layer-slot-host"></div>
+            <div class="flex-grow-1">
+                <label class="form-label small text-muted mb-1">Blend mode</label>
+                <select class="form-select form-select-sm blend-select">
+                    <option value="normal">Normal</option>
+                    <option value="multiply">Multiply</option>
+                    <option value="screen">Screen</option>
+                    <option value="overlay">Overlay</option>
+                    <option value="add">Add (Linear Dodge)</option>
+                    <option value="soft-light">Soft Light</option>
+                    <option value="hard-light">Hard Light</option>
+                    <option value="darken">Darken</option>
+                    <option value="lighten">Lighten</option>
+                    <option value="difference">Difference</option>
+                </select>
+            </div>
+        </div>
+        <div class="layer-sliders"></div>`;
+
+    const matcapSlot = createSlot({
+        caption: 'Matcap',
+        clearable: true,
+        onFile: f => setLayerImage(layer, matcapSlot, f),
+        onClear: () => clearLayerImage(layer)
+    });
+    card.querySelector('.layer-slot-host').appendChild(matcapSlot.el);
+
+    const select = card.querySelector('.blend-select');
+    select.value = layer.blendMode || 'normal';
+    select.addEventListener('change', () => {
+        layer.blendMode = select.value;
+        compositeDirty = true;
+        scheduleRender(true);
+    });
+
+    card.querySelector('.layer-sliders').appendChild(
+        createSlider('Opacity', { min: 0, max: 1, step: 0.01, value: layer.opacity }, v => {
+            layer.opacity = v;
+            compositeDirty = true;
+        })
+    );
+
+    card.querySelector('.remove-layer-btn').addEventListener('click', () => removeLayer(layer, card));
+    return card;
+}
+
+function addLayer() {
+    if (layers.length >= MAX_LAYERS) return;
+    const layer = {
+        id: nextLayerId++,
+        matcap: null,
+        matcapPx: null,
+        blendMode: 'normal',
+        opacity: 1,
+        seq: 0,
+        removed: false
+    };
+    layers.push(layer);
+    layersContainer.appendChild(createLayerCard(layer));
+    renumberLayers();
+    updateAddLayerState();
+}
+
+function removeLayer(layer, card) {
+    const idx = layers.indexOf(layer);
+    if (idx === -1) return;
+    layer.removed = true;
+    closeBmp(layer.matcap);
+    layers.splice(idx, 1);
+    card.remove();
+    renumberLayers();
+    updateAddLayerState();
+    layersChanged();
+}
+
+addLayerBtn.addEventListener('click', addLayer);
+
+// ------------------------------------------------------------------
+// Drag & drop a base matcap anywhere on the main area
+// ------------------------------------------------------------------
+mainPlaceholder.addEventListener('click', () => baseSlot.open());
+mainPlaceholder.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        baseSlot.open();
+    }
 });
+appMain.addEventListener('dragover', e => {
+    e.preventDefault();
+    mainPlaceholder.classList.add('dragover');
+});
+appMain.addEventListener('dragleave', e => {
+    if (!appMain.contains(e.relatedTarget)) mainPlaceholder.classList.remove('dragover');
+});
+appMain.addEventListener('drop', e => {
+    e.preventDefault();
+    mainPlaceholder.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) loadBase(file);
+});
+// A missed drop must not navigate the page to the image.
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => e.preventDefault());
+
+addLayer();
 
 function updateHandlePosition(pitchDeg, yawDeg) {
     if (!ballController || !ballHandle) return;
@@ -424,6 +802,7 @@ function rotateVector(x, y, z, rx, ry, rz) {
 }
 
 function generateFaces(size, isFast = false) {
+    ensureComposite();
     const result = {};
     const { rx, ry, rz } = getRotations();
     const backFillMode = isFast ? 'blur' : getBackFillMode();
@@ -550,10 +929,6 @@ function toHalfFloat(value) {
     return sign | (exponent << 10) | (mantissa >> 13);
 }
 
-// Packs SDR 0-255 RGBA into RGBA16161616F (half float per channel, values 0..1).
-// This is what lets us ship a matching "_env.hdr.vtf" next to the regular
-// "_env.vtf": same picture, just stored in the format the engine expects
-// when HDR rendering is on, so it stops being read at the wrong exposure/gamma.
 function packRGBA16161616F(src) {
     const px = src.length / 4;
     const out = new Uint8Array(px * 8);
@@ -676,9 +1051,6 @@ function faceByteSize(size, format) {
     }
 }
 
-// Box-filter downsample of one RGBA face, size -> size/2. Used to build the
-// mip chain (size, size/2, size/4, ...) that Source expects a cubemap to
-// actually have instead of a single NOMIP level.
 function downsampleFace(src, size) {
     const half = size / 2;
     const out = new Uint8ClampedArray(half * half * 4);
@@ -697,8 +1069,6 @@ function downsampleFace(src, size) {
     return out;
 }
 
-// Builds the full mip chain for all 6 faces, largest first, stopping at
-// minSize (4x4 for DXT1 since it's block-compressed, 1x1 otherwise).
 function buildMipChain(faces, size, minSize) {
     const chain = [{ size, faces }];
     let curSize = size, curFaces = faces;
@@ -722,9 +1092,6 @@ function flipFaceRows(rawRgba, size) {
     return flipped;
 }
 
-// Builds a VTF with a proper mip chain (size, size/2, size/4, ... down to
-// minSize). DXT1 is block-compressed so it can't go below a 4x4 block;
-// everything else goes down to 1x1. VTF stores mips smallest-first.
 function buildVTFGeneric(faces, size, flipRows, format, minSize) {
     const mipChain = buildMipChain(faces, size, minSize);
     const mipCount = mipChain.length;
@@ -745,8 +1112,6 @@ function buildVTFGeneric(faces, size, flipRows, format, minSize) {
     wU32(7); wU32(1);
     wU32(headerSize);
     wU16(size); wU16(size);
-    // NOMIP dropped now that we actually ship mip levels; NOLOD kept so the
-    // engine always loads the full chain rather than picture-quality-scaling it down.
     const ENVMAP = 0x00004000, NOLOD = 0x00000200;
     wU32(ENVMAP | NOLOD);
     wU16(1); wU16(0);
@@ -768,7 +1133,6 @@ function buildVTFGeneric(faces, size, flipRows, format, minSize) {
         o += faceBytes;
     };
 
-    // Smallest mip first, largest last (VTF ordering).
     for (let i = mipChain.length - 1; i >= 0; i--) {
         const level = mipChain[i];
         for (const face of FACES) writeFace(level.faces[face], level.size);
@@ -783,13 +1147,6 @@ function buildVTF(faces, size, flipRows, format) {
     return buildVTFGeneric(faces, size, flipRows, format, minSize);
 }
 
-// Same pixel data, repacked as RGBA16161616F (the HDR-capable format).
-// Per the wiki tip: shipping a matching "_env.hdr.vtf" is the fix for
-// sRGB-flagged cubemaps only displaying correctly when HDR is off / going
-// blown-out white when HDR is on — the engine picks this file instead of
-// misreading the SDR one under HDR rendering. We don't set an sRGB flag on
-// either file, so this SDR VTF alone should already be safe; the .hdr.vtf
-// is the belt-and-suspenders fix for maps/mods that force HDR.
 function buildVTFHDR(faces, size, flipRows) {
     return buildVTFGeneric(faces, size, flipRows, 'RGBA16161616F', 1);
 }
@@ -938,6 +1295,7 @@ function runGeneration(isFast = false) {
     if (!srcData) return;
 
     if (isFast) {
+        clearTimeout(genTimer);
         const renderSize = 128;
         const faces = generateFaces(renderSize, true);
         renderPreview(faces, renderSize);
@@ -945,7 +1303,8 @@ function runGeneration(isFast = false) {
         showStatus('Generating high quality...');
         generateBtn.disabled = true;
 
-        setTimeout(() => {
+        clearTimeout(genTimer);
+        genTimer = setTimeout(() => {
             const targetSize = getFaceSize();
             const faces = generateFaces(targetSize, false);
             generatedFaces = faces;
