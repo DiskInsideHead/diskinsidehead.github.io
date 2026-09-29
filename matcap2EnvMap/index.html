@@ -209,11 +209,6 @@
                 color: #888;
                 margin-top: 4px;
             }
-            .note-text {
-                font-size: 13px;
-                color: #666;
-                text-align: left;
-            }
             .ball-controller-wrap {
                 width: 80px;
                 height: 80px;
@@ -240,20 +235,41 @@
                 pointer-events: none;
                 box-shadow: 0 0 4px rgba(0,0,0,0.5);
             }
-            .toast-container {
-                position: fixed;
-                top: 16px;
-                right: 16px;
-                z-index: 1055;
-                pointer-events: none;
+
+            /* ---------- No accidental drag / selection while using controls ---------- */
+            .app-sidebar, .app-main {
+                -webkit-user-select: none;
+                user-select: none;
             }
-            .toast-container .toast {
-                pointer-events: auto;
+            .app-sidebar input[type="text"] {
+                -webkit-user-select: text;
+                user-select: text;
             }
+            canvas, img {
+                -webkit-user-drag: none;
+                user-drag: none;
+            }
+
+            /* ---------- Alpha sliders (checkerboard + colour ramp) ---------- */
+            :root {
+                --checker: repeating-conic-gradient(#c9c9c9 0% 25%, #ffffff 0% 50%) 50% / 10px 10px;
+            }
+            .alpha-range::-webkit-slider-runnable-track {
+                height: .9rem;
+                border-radius: .45rem;
+                border: 1px solid #ced4da;
+                background: linear-gradient(to right, transparent, var(--alpha-color, #000)), var(--checker);
+            }
+            .alpha-range::-moz-range-track {
+                height: .9rem;
+                border-radius: .45rem;
+                border: 1px solid #ced4da;
+                background: linear-gradient(to right, transparent, var(--alpha-color, #000)), var(--checker);
+            }
+            .alpha-range::-webkit-slider-thumb { margin-top: -.2rem; }
         </style>
     </head>
     <body>
-        <div id="toastContainer" class="toast-container"></div>
         <div class="app-shell">
             <aside class="app-sidebar">
                 <div id="drop-area">
@@ -321,23 +337,27 @@
                             <label class="btn btn-outline-primary" for="flip-vertical">Flip rows</label>
                         </div>
                     </fieldset>
+
                     <h3>Back-face fill</h3>
-                    <fieldset title="A single matcap only ever shows the front hemisphere of the sphere. This controls how the unseen back is filled in.">
+                    <fieldset title="Controls how the unseen back hemisphere is filled in.">
                         <div class="btn-group w-100 mb-3" role="group">
                             <input checked class="btn-check" id="backfill-blur" name="backFill" type="radio" value="blur">
-                            <label class="btn btn-outline-primary" for="backfill-blur">Blur mirror</label>
+                            <label class="btn btn-outline-primary btn-sm" for="backfill-blur">Blur</label>
 
                             <input class="btn-check" id="backfill-color" name="backFill" type="radio" value="color">
-                            <label class="btn btn-outline-primary" for="backfill-color">Solid color</label>
+                            <label class="btn btn-outline-primary btn-sm" for="backfill-color">Solid</label>
+
+                            <input class="btn-check" id="backfill-gradient" name="backFill" type="radio" value="gradient">
+                            <label class="btn btn-outline-primary btn-sm" for="backfill-gradient">Gradient</label>
 
                             <input class="btn-check" id="backfill-matcap" name="backFill" type="radio" value="matcap">
-                            <label class="btn btn-outline-primary" for="backfill-matcap">Matcap</label>
+                            <label class="btn btn-outline-primary btn-sm" for="backfill-matcap">Matcap</label>
                         </div>
                     </fieldset>
 
                     <!-- Controls for Solid Color -->
                     <div id="backColorArea" class="mb-3" style="display: none;">
-                        <label class="form-label small text-muted mb-1">Color:</label>
+                        <label class="form-label small text-muted mb-1">Solid color:</label>
                         <div class="d-flex align-items-center gap-2">
                             <input type="color" class="form-control form-control-color" id="backColorPicker" value="#1a1a1a" title="Choose color">
                             <button type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" id="pipetteBtn" title="Pick color with eyedropper">
@@ -348,36 +368,94 @@
                             </button>
                             <span class="small text-muted font-monospace" id="backColorHex">#1a1a1a</span>
                         </div>
+                        <div class="d-flex justify-content-between small text-muted mt-2">
+                            <label for="backColorAlpha" class="form-label mb-0">Opacity:</label>
+                            <span><strong id="backColorAlphaVal">100</strong>%</span>
+                        </div>
+                        <input type="range" class="form-range alpha-range" id="backColorAlpha" min="0" max="100" step="1" value="100" title="Alpha / opacity">
+                    </div>
+
+                    <!-- Controls for Gradient -->
+                    <div id="backGradientArea" class="mb-3" style="display: none;">
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label small text-muted mb-1">Color 1 (Center):</label>
+                                <div class="d-flex align-items-center gap-2">
+                                    <input type="color" class="form-control form-control-color" id="gradColor1Picker" value="#0d6efd" title="Center color">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary p-1" id="pipetteGrad1" title="Pick center color">
+                                        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"/></svg>
+                                    </button>
+                                </div>
+                                <div class="d-flex justify-content-between small text-muted mt-1">
+                                    <label for="gradColor1Alpha" class="form-label mb-0">Opacity:</label>
+                                    <span><strong id="gradColor1AlphaVal">100</strong>%</span>
+                                </div>
+                                <input type="range" class="form-range alpha-range" id="gradColor1Alpha" min="0" max="100" step="1" value="100" title="Alpha / opacity">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted mb-1">Color 2 (Rim):</label>
+                                <div class="d-flex align-items-center gap-2">
+                                    <input type="color" class="form-control form-control-color" id="gradColor2Picker" value="#111827" title="Rim color">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary p-1" id="pipetteGrad2" title="Pick rim color">
+                                        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"/></svg>
+                                    </button>
+                                </div>
+                                <div class="d-flex justify-content-between small text-muted mt-1">
+                                    <label for="gradColor2Alpha" class="form-label mb-0">Opacity:</label>
+                                    <span><strong id="gradColor2AlphaVal">100</strong>%</span>
+                                </div>
+                                <input type="range" class="form-range alpha-range" id="gradColor2Alpha" min="0" max="100" step="1" value="100" title="Alpha / opacity">
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between small text-muted">
+                            <label for="gradInnerRadius" class="form-label mb-0">Inner circle size:</label>
+                            <span><strong id="gradInnerRadiusVal">50</strong>%</span>
+                        </div>
+                        <input type="range" class="form-range mb-2" id="gradInnerRadius" min="5" max="95" step="1" value="50" title="Размер внутреннего круга градиента">
+
+                        <div class="d-flex justify-content-between small text-muted">
+                            <label for="gradSharpness" class="form-label mb-0">Inner circle sharpness:</label>
+                            <span><strong id="gradSharpnessVal">0</strong>%</span>
+                        </div>
+                        <input type="range" class="form-range" id="gradSharpness" min="0" max="100" step="1" value="0" title="Резкость границы внутреннего круга">
                     </div>
 
                     <!-- Controls for Second Matcap -->
                     <div id="backMatcapArea" class="mb-3" style="display: none;">
-                        <div class="d-flex align-items-center gap-3">
+                        <div class="d-flex align-items-center gap-3 mb-2">
                             <div id="backMatcapSlotHost"></div>
-                            <div class="small text-muted">
-                                Matcap image for the back hemisphere
-                            </div>
                         </div>
+                        <div class="d-flex justify-content-between small text-muted">
+                            <label for="backMatcapScale" class="form-label mb-0">Back scale:</label>
+                            <span><strong id="backMatcapScaleVal">1.00</strong>×</span>
+                        </div>
+                        <input type="range" class="form-range" id="backMatcapScale" min="0.5" max="3.0" step="0.01" value="1.0">
                     </div>
 
-                    <!-- Fade rate slider (shown for blur and color) -->
-                    <div id="backFadeRateArea">
+                    <!-- Universal Coverage Radius & Edge Sharpness -->
+                    <div id="backBoundaryControls" class="pt-2 border-top">
                         <div class="d-flex justify-content-between small text-muted">
-                            <label for="backBlurStrength" class="form-label mb-0">Fade rate:</label>
-                            <span><strong id="backBlurStrengthVal">1.0</strong>×</span>
+                            <label for="backRadius" class="form-label mb-0">Coverage (Radius):</label>
+                            <span><strong id="backRadiusVal">1.00</strong>×</span>
                         </div>
-                        <input type="range" class="form-range" id="backBlurStrength" min="0.4" max="2.5" step="0.1" value="1.0">
+                        <input type="range" class="form-range mb-2" id="backRadius" min="0.1" max="1.8" step="0.01" value="1.0" title="Уменьшение или увеличение области охвата задней части">
+
+                        <div class="d-flex justify-content-between small text-muted">
+                            <label for="backEdgeSharpness" class="form-label mb-0">Edge sharpness:</label>
+                            <span><strong id="backEdgeSharpnessVal">25</strong>%</span>
+                        </div>
+                        <input type="range" class="form-range" id="backEdgeSharpness" min="0" max="100" step="1" value="25" title="Резкость границы стыка">
                     </div>
                 </div>
 
                 <div class="settings-area p-3 border rounded bg-light">
                     <h3>Overall softness</h3>
-                    <fieldset title="Side faces (px/nx/py/ny) are inherently mirror-symmetric for any single-photo matcap — this can't be removed, only visually broken up by softening everything a bit.">
+                    <fieldset title="Blurs the cubemap to soften symmetry.">
                         <div class="d-flex justify-content-between small text-muted">
                             <label for="globalSoftness" class="form-label mb-0">Softness:</label>
                             <span><strong id="globalSoftnessVal">0</strong>%</span>
                         </div>
-                        <input type="range" class="form-range" id="globalSoftness" min="0" max="100" step="5" value="0">
+                        <input type="range" class="form-range" id="globalSoftness" min="0" max="100" step="1" value="0">
                     </fieldset>
                 </div>
 
@@ -416,15 +494,17 @@
                         </div>
                     </fieldset>
                 </div>
+
                 <div class="settings-area p-3 border rounded bg-light">
                     <h3>Scale</h3>
                     <fieldset title="Приближение центра маткапа для скрытия краев.">
                         <div class="d-flex justify-content-between small text-muted">
-                            <span><strong id="matcapScaleVal">1.0</strong>×</span>
+                            <span><strong id="matcapScaleVal">1.00</strong>×</span>
                         </div>
                         <input type="range" class="form-range" id="matcapScale" min="0.9" max="3.0" step="0.01" value="1.0">
                     </fieldset>
                 </div>
+
                 <div class="sidebar-actions">
                     <button class="btn btn-primary btn-lg w-100" id="generateBtn" disabled>Generate</button>
                 </div>
@@ -457,8 +537,6 @@
                             </div>
                         </fieldset>
                     </div>
-
-                    <p class="note-text">Check the .vtf in VTFEdit before using it in-game.</p>
                 </div>
             </main>
         </div>

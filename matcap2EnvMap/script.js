@@ -1,20 +1,411 @@
-// srcData = what the generator samples: base matcap with all layers composited on top.
-// baseData = the untouched base matcap pixels.
-let srcData = null, srcW = 0, srcH = 0;
-let baseData = null;
-let compositeDirty = false;
-let generatedFaces = null, generatedSize = 0;
-let renderTimeout = null;
-let genTimer = null;
-let isBallInteracting = false;
-let isSliderInteracting = false;
+// =====================================================================
+// Matcap -> EnvMap
+//
+// All heavy pixel work (layer compositing, mip pyramid, cubemap face
+// generation) lives in createEngineCore(). It is executed inside a Web
+// Worker so the UI (sliders, colour picker) never blocks. If workers are
+// unavailable it runs on the main thread in cooperative (yielding) mode.
+// =====================================================================
 
-// Back-face fill secondary data
-let backData = null, backW = 0, backH = 0, backBmp = null;
-let solidColorRgb = [26, 26, 26];
+// ------------------------------------------------------------------
+// Render engine core (must stay self-contained: it is stringified
+// and shipped to the worker)
+// ------------------------------------------------------------------
+function createEngineCore(post) {
+    'use strict';
+
+    const FACES = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
+    // Per-face basis: direction = A*a + B*b + C  (a, b in [-1, 1])
+    const BASIS = {
+        px: [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        nx: [0, 0, 1, 0, 1, 0, -1, 0, 0],
+        py: [1, 0, 0, 0, 0, -1, 0, 1, 0],
+        ny: [1, 0, 0, 0, 0, 1, 0, -1, 0],
+        pz: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        nz: [-1, 0, 0, 0, 1, 0, 0, 0, -1]
+    };
+
+    const BLEND = {
+        normal: (b, l) => l,
+        multiply: (b, l) => b * l,
+        screen: (b, l) => 1 - (1 - b) * (1 - l),
+        overlay: (b, l) => (b < 0.5 ? 2 * b * l : 1 - 2 * (1 - b) * (1 - l)),
+        'hard-light': (b, l) => (l < 0.5 ? 2 * b * l : 1 - 2 * (1 - b) * (1 - l)),
+        add: (b, l) => Math.min(1, b + l),
+        'soft-light': (b, l) => (l <= 0.5
+            ? b - (1 - 2 * l) * b * (1 - b)
+            : b + (2 * l - 1) * ((b <= 0.25 ? ((16 * b - 12) * b + 4) * b : Math.sqrt(b)) - b)),
+        darken: (b, l) => Math.min(b, l),
+        lighten: (b, l) => Math.max(b, l),
+        difference: (b, l) => Math.abs(b - l)
+    };
+
+    // ---- state ----
+    let base = null;                 // { data, w, h }
+    let back = null;                 // { data, w, h }
+    const layerPx = new Map();       // id -> Uint8ClampedArray (same size as base)
+    let baseVer = 0, layerVer = 0;
+    let composite = null, compKey = '';
+    let pyramid = null;
+
+    let running = null, queued = null;
+
+    // ---- yielding (lets incoming messages be processed during long jobs) ----
+    const chan = new MessageChannel();
+    const yieldNow = () => new Promise(res => {
+        chan.port1.onmessage = () => res();
+        chan.port2.postMessage(0);
+    });
+
+    // ---- sampling ----
+    function sample(data, w, h, u, v, out) {
+        u = u < 0 ? 0 : (u > 1 ? 1 : u);
+        v = v < 0 ? 0 : (v > 1 ? 1 : v);
+        const x = u * (w - 1), y = v * (h - 1);
+        const x0 = x | 0, y0 = y | 0;
+        const x1 = x0 + 1 < w ? x0 + 1 : w - 1;
+        const y1 = y0 + 1 < h ? y0 + 1 : h - 1;
+        const fx = x - x0, fy = y - y0;
+        const i00 = (y0 * w + x0) * 4, i10 = (y0 * w + x1) * 4;
+        const i01 = (y1 * w + x0) * 4, i11 = (y1 * w + x1) * 4;
+        const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy);
+        const w01 = (1 - fx) * fy, w11 = fx * fy;
+        out[0] = data[i00] * w00 + data[i10] * w10 + data[i01] * w01 + data[i11] * w11;
+        out[1] = data[i00 + 1] * w00 + data[i10 + 1] * w10 + data[i01 + 1] * w01 + data[i11 + 1] * w11;
+        out[2] = data[i00 + 2] * w00 + data[i10 + 2] * w10 + data[i01 + 2] * w01 + data[i11 + 2] * w11;
+    }
+
+    // Same as sample(), but UVs outside the matcap disc are pulled onto its rim.
+    function sampleDisc(data, w, h, u, v, out) {
+        const nu = (u - 0.5) * 2, nv = (v - 0.5) * 2;
+        const r2 = nu * nu + nv * nv;
+        if (r2 > 0.990025) {
+            const k = 0.995 / Math.sqrt(r2);
+            u = 0.5 + nu * k * 0.5;
+            v = 0.5 + nv * k * 0.5;
+        }
+        sample(data, w, h, u, v, out);
+    }
+
+    const smooth = t => { t = t < 0 ? 0 : (t > 1 ? 1 : t); return t * t * (3 - 2 * t); };
+
+    // ---- compositing of extra matcap layers over the base ----
+    function ensureComposite(layerDefs) {
+        const active = layerDefs.filter(l => layerPx.has(l.id));
+        const key = baseVer + '|' + layerVer + '|' +
+            active.map(l => l.id + ':' + l.opacity + ':' + l.blend).join(',');
+        if (composite && key === compKey) return;
+        compKey = key;
+        pyramid = null;
+
+        if (!active.length) { composite = base.data; return; }
+
+        const out = new Uint8ClampedArray(base.data);
+        const n = base.w * base.h;
+        for (const l of active) {
+            const px = layerPx.get(l.id);
+            if (!px || px.length < n * 4) continue;
+            const op = l.opacity;
+            const fn = BLEND[l.blend] || BLEND.normal;
+            for (let i = 0, j = 0; i < n; i++, j += 4) {
+                const a = (px[j + 3] / 255) * op;
+                if (a <= 0) continue;
+                const bR = out[j] / 255, bG = out[j + 1] / 255, bB = out[j + 2] / 255;
+                out[j]     += (fn(bR, px[j] / 255) * 255 - out[j]) * a;
+                out[j + 1] += (fn(bG, px[j + 1] / 255) * 255 - out[j + 1]) * a;
+                out[j + 2] += (fn(bB, px[j + 2] / 255) * 255 - out[j + 2]) * a;
+            }
+        }
+        composite = out;
+    }
+
+    // ---- mip pyramid (used for blur back-fill and global softness) ----
+    function buildDiscClamped(src, w, h) {
+        const out = new Uint8ClampedArray(w * h * 4);
+        const cx = (w - 1) / 2, cy = (h - 1) / 2;
+        const R = Math.min(cx, cy);
+        const tmp = new Float64Array(3);
+        for (let y = 0; y < h; y++) {
+            const ny = (y - cy) / R;
+            for (let x = 0; x < w; x++) {
+                const nx = (x - cx) / R;
+                const r = Math.sqrt(nx * nx + ny * ny);
+                let sx = x, sy = y;
+                if (r > 0.995) {
+                    const k = 0.995 / r;
+                    sx = cx + nx * k * R;
+                    sy = cy + ny * k * R;
+                }
+                sample(src, w, h, sx / (w - 1), sy / (h - 1), tmp);
+                const off = (y * w + x) * 4;
+                out[off] = tmp[0]; out[off + 1] = tmp[1]; out[off + 2] = tmp[2]; out[off + 3] = 255;
+            }
+        }
+        return out;
+    }
+
+    function buildPyramid(data0, w0, h0) {
+        const levels = [{ data: data0, w: w0, h: h0 }];
+        let w = w0, h = h0, data = data0;
+        while (w > 4 && h > 4 && levels.length < 8) {
+            const nw = Math.max(1, w >> 1), nh = Math.max(1, h >> 1);
+            const nd = new Uint8ClampedArray(nw * nh * 4);
+            for (let y = 0; y < nh; y++) {
+                const y0 = Math.min(y * 2, h - 1), y1 = Math.min(y * 2 + 1, h - 1);
+                for (let x = 0; x < nw; x++) {
+                    const x0 = Math.min(x * 2, w - 1), x1 = Math.min(x * 2 + 1, w - 1);
+                    for (let ch = 0; ch < 3; ch++) {
+                        const s = data[(y0 * w + x0) * 4 + ch] + data[(y0 * w + x1) * 4 + ch] +
+                                  data[(y1 * w + x0) * 4 + ch] + data[(y1 * w + x1) * 4 + ch];
+                        nd[(y * nw + x) * 4 + ch] = s / 4;
+                    }
+                    nd[(y * nw + x) * 4 + 3] = 255;
+                }
+            }
+            levels.push({ data: nd, w: nw, h: nh });
+            w = nw; h = nh; data = nd;
+        }
+        return levels;
+    }
+
+    function getPyramid() {
+        if (!pyramid) {
+            const clamped = buildDiscClamped(composite, base.w, base.h);
+            pyramid = buildPyramid(clamped, base.w, base.h);
+            pyramid[0] = { data: composite, w: base.w, h: base.h };
+        }
+        return pyramid;
+    }
+
+    const mipA = new Float64Array(3), mipB = new Float64Array(3);
+    function sampleMip(pyr, u, v, level, out) {
+        const maxLevel = pyr.length - 1;
+        level = level < 0 ? 0 : (level > maxLevel ? maxLevel : level);
+        const l0 = level | 0, l1 = l0 + 1 < maxLevel ? l0 + 1 : maxLevel;
+        const t = level - l0;
+        const p0 = pyr[l0], p1 = pyr[l1];
+        sample(p0.data, p0.w, p0.h, u, v, mipA);
+        sample(p1.data, p1.w, p1.h, u, v, mipB);
+        out[0] = mipA[0] * (1 - t) + mipB[0] * t;
+        out[1] = mipA[1] * (1 - t) + mipB[1] * t;
+        out[2] = mipA[2] * (1 - t) + mipB[2] * t;
+    }
+
+    function makeRotator(rx, ry, rz) {
+        const cx = Math.cos(rx), sx = Math.sin(rx);
+        const cy = Math.cos(ry), sy = Math.sin(ry);
+        const cz = Math.cos(rz), sz = Math.sin(rz);
+        return (x, y, z, out) => {
+            const y1 = y * cx - z * sx, z1 = y * sx + z * cx;
+            const x2 = x * cy + z1 * sy, z2 = -x * sy + z1 * cy;
+            out[0] = x2 * cz - y1 * sz;
+            out[1] = x2 * sz + y1 * cz;
+            out[2] = z2;
+        };
+    }
+
+    // ---- face generation ----
+    // Returns an object of face buffers, or null if the job was aborted.
+    async function generate(size, p, job) {
+        ensureComposite(p.layers);
+        const src = composite, sw = base.w, sh = base.h;
+        const rot = makeRotator(p.rx, p.ry, p.rz);
+
+        const mode = (p.backMode === 'matcap' && !back) ? 'blur' : p.backMode;
+        const soft = p.softness;
+        const pyr = (mode === 'blur' || soft > 0) ? getPyramid() : null;
+        const maxLevel = pyr ? pyr.length - 1 : 0;
+
+        const hs = 0.5 / p.scale;
+        const bhs = 0.5 / p.backScale;
+        const threshold = -(1 - p.backRadius);
+        const halfWidth = 0.4 * Math.pow(1 - p.edgeSharp, 2.2) + 0.002;
+        const inv2hw = 1 / (2 * halfWidth);
+
+        // Solid fill (premultiplied by its alpha)
+        const sA = p.solid[3];
+        const sR = p.solid[0] * sA, sG = p.solid[1] * sA, sB = p.solid[2] * sA;
+
+        // Gradient fill (premultiplied interpolation, like CSS gradients)
+        const a1 = p.grad1[3], a2 = p.grad2[3];
+        const g1R = p.grad1[0] * a1, g1G = p.grad1[1] * a1, g1B = p.grad1[2] * a1;
+        const g2R = p.grad2[0] * a2, g2G = p.grad2[1] * a2, g2B = p.grad2[2] * a2;
+        const gRange = Math.max(0.001, 1 + threshold);
+        const gInv = 1 / (2 * (0.5 * Math.pow(1 - p.gradSharp, 2.2) + 0.0015));
+        const gInner = p.gradInner;
+
+        const cF = new Float64Array(3), cB = new Float64Array(3), cS = new Float64Array(3);
+        const rv = new Float64Array(3);
+        const denom = size - 1;
+        const rowsPerChunk = Math.max(4, (32768 / size) | 0);
+        const faces = {};
+
+        for (const face of FACES) {
+            const bs = BASIS[face];
+            rot(bs[0], bs[1], bs[2], rv); const Ax = rv[0], Ay = rv[1], Az = rv[2];
+            rot(bs[3], bs[4], bs[5], rv); const Bx = rv[0], By = rv[1], Bz = rv[2];
+            rot(bs[6], bs[7], bs[8], rv); const Cx = rv[0], Cy = rv[1], Cz = rv[2];
+
+            const buf = new Uint8ClampedArray(size * size * 4);
+            let off = 0;
+
+            for (let row = 0; row < size; row++) {
+                if (job.final && row > 0 && row % rowsPerChunk === 0) {
+                    await yieldNow();
+                    if (job.aborted) return null;
+                }
+                const b = 1 - 2 * row / denom;
+                const rowX = Bx * b + Cx, rowY = By * b + Cy, rowZ = Bz * b + Cz;
+
+                for (let col = 0; col < size; col++, off += 4) {
+                    const a = -1 + 2 * col / denom;
+                    const il = 1 / Math.sqrt(a * a + b * b + 1);
+                    const dx = (Ax * a + rowX) * il;
+                    const dy = (Ay * a + rowY) * il;
+                    const dz = (Az * a + rowZ) * il;
+
+                    const uF = 0.5 - dz * hs, vF = 0.5 - dy * hs;
+                    sampleDisc(src, sw, sh, uF, vF, cF);
+                    let r = cF[0], g = cF[1], bl = cF[2];
+
+                    const raw = (threshold - dx) * inv2hw + 0.5;
+                    if (raw > 0) {
+                        const tB = raw >= 1 ? 1 : raw * raw * (3 - 2 * raw);
+                        let br, bg, bb;
+
+                        if (mode === 'matcap') {
+                            sampleDisc(back.data, back.w, back.h, 0.5 + dz * bhs, 0.5 - dy * bhs, cB);
+                            br = cB[0]; bg = cB[1]; bb = cB[2];
+                        } else if (mode === 'gradient') {
+                            let dn = (dx + 1) / gRange;
+                            dn = dn < 0 ? 0 : (dn > 1 ? 1 : dn);
+                            const t = smooth((dn - gInner) * gInv + 0.5);
+                            const aa = a1 * (1 - t) + a2 * t;
+                            // fill over the matcap underneath
+                            br = r * (1 - aa) + g1R * (1 - t) + g2R * t;
+                            bg = g * (1 - aa) + g1G * (1 - t) + g2G * t;
+                            bb = bl * (1 - aa) + g1B * (1 - t) + g2B * t;
+                        } else if (mode === 'color') {
+                            br = r * (1 - sA) + sR;
+                            bg = g * (1 - sA) + sG;
+                            bb = bl * (1 - sA) + sB;
+                        } else {
+                            const bt = smooth(-dx);
+                            sampleMip(pyr, uF, vF, Math.pow(bt, 1.3) * maxLevel, cB);
+                            br = cB[0]; bg = cB[1]; bb = cB[2];
+                        }
+
+                        r = r * (1 - tB) + br * tB;
+                        g = g * (1 - tB) + bg * tB;
+                        bl = bl * (1 - tB) + bb * tB;
+                    }
+
+                    if (soft > 0) {
+                        sampleMip(pyr, uF, vF, soft * maxLevel, cS);
+                        r = r * (1 - soft) + cS[0] * soft;
+                        g = g * (1 - soft) + cS[1] * soft;
+                        bl = bl * (1 - soft) + cS[2] * soft;
+                    }
+
+                    buf[off] = r;
+                    buf[off + 1] = g;
+                    buf[off + 2] = bl;
+                    buf[off + 3] = 255;
+                }
+            }
+            faces[face] = buf;
+        }
+        return faces;
+    }
+
+    // ---- job queue: newest request wins; unfinished "final" jobs are aborted ----
+    async function startNext() {
+        if (running || !queued) return;
+        const m = queued;
+        queued = null;
+        const job = running = { final: m.final, aborted: false };
+        try {
+            const faces = await generate(m.size, m.p, job);
+            if (faces) {
+                post({ type: 'faces', seq: m.seq, size: m.size, final: m.final, faces },
+                     FACES.map(f => faces[f].buffer));
+            }
+        } catch (err) {
+            post({ type: 'error', message: String((err && err.stack) || err) });
+        }
+        running = null;
+        startNext();
+    }
+
+    return {
+        handle(m) {
+            switch (m.type) {
+                case 'setBase':
+                    if (running) running.aborted = true;
+                    base = { data: m.data, w: m.w, h: m.h };
+                    baseVer++;
+                    break;
+                case 'setLayer':
+                    if (running) running.aborted = true;
+                    if (m.data) layerPx.set(m.id, m.data); else layerPx.delete(m.id);
+                    layerVer++;
+                    break;
+                case 'setBack':
+                    if (running) running.aborted = true;
+                    back = m.data ? { data: m.data, w: m.w, h: m.h } : null;
+                    break;
+                case 'render':
+                    if (!base) return;
+                    queued = m;
+                    if (running && running.final) running.aborted = true;
+                    startNext();
+                    break;
+            }
+        }
+    };
+}
+
+// ------------------------------------------------------------------
+// Engine bootstrap (Worker, with main-thread fallback)
+// ------------------------------------------------------------------
+const engine = (() => {
+    try {
+        const code = `const core=(${createEngineCore.toString()})((m,t)=>self.postMessage(m,t));` +
+                     `self.onmessage=e=>core.handle(e.data);`;
+        const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+        const worker = new Worker(url);
+        worker.onmessage = e => handleEngineMessage(e.data);
+        worker.onerror = e => console.error('Render worker error:', e.message);
+        return { send: (m, transfer) => worker.postMessage(m, transfer || []) };
+    } catch (err) {
+        console.warn('Web Worker unavailable, rendering on the main thread.', err);
+        const core = createEngineCore(m => setTimeout(() => handleEngineMessage(m), 0));
+        return { send: m => setTimeout(() => core.handle(m), 0) };
+    }
+})();
+
+// ------------------------------------------------------------------
+// State (main thread)
+// ------------------------------------------------------------------
+let baseReady = false, srcW = 0, srcH = 0;
+let generatedFaces = null, generatedSize = 0;
+let backBmp = null;
+let isBallDragging = false;
+
+let renderTimer = null;
+let renderSeq = 0, shownSeq = 0;
+const DRAFT_SIZE = 128;
+const FINAL_DELAY = 250;
+
+// Colours: rgb 0..255, a 0..1
+const colorState = {
+    solid: { rgb: [26, 26, 26], a: 1 },
+    grad1: { rgb: [13, 110, 253], a: 1 },
+    grad2: { rgb: [17, 24, 39], a: 1 }
+};
 
 const MAX_LAYERS = 16;
-const THUMB_PX = 128;      // thumbnail backing size (shown at 64 css px)
+const THUMB_PX = 128;
 
 const generateBtn = document.getElementById('generateBtn');
 const resultArea = document.getElementById('resultArea');
@@ -33,30 +424,10 @@ const rotZInput = document.getElementById('rotZ');
 const ballController = document.getElementById('ballController');
 const ballHandle = document.getElementById('ballHandle');
 
-const backColorPicker = document.getElementById('backColorPicker');
-const pipetteBtn = document.getElementById('pipetteBtn');
-
-function showStatus(text, duration = 3000) {
-    const container = document.getElementById('toastContainer');
-    if (!container) return;
-    const toast = document.createElement('div');
-    toast.className = 'toast show align-items-center text-bg-dark border-0 mb-2 shadow-sm';
-    toast.role = 'alert';
-    toast.innerHTML = `
-        <div class="d-flex">
-            <div class="toast-body py-2 px-3"></div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-        </div>
-    `;
-    toast.querySelector('.toast-body').textContent = text;
-    container.appendChild(toast);
-    if (duration > 0) {
-        setTimeout(() => {
-            toast.classList.remove('show');
-            setTimeout(() => toast.remove(), 300);
-        }, duration);
-    }
-}
+// Nothing in this app relies on native drag & drop from inside the page
+// (files are dropped from outside). Killing it prevents the browser from
+// "picking up" a selection / canvas while a slider is being dragged.
+document.addEventListener('dragstart', e => e.preventDefault());
 
 // ------------------------------------------------------------------
 // Image decoding / rasterizing
@@ -65,10 +436,7 @@ const isImageFile = f => !!f && (f.type.startsWith('image/') || /\.(png|jpe?g|we
 const closeBmp = b => { if (b && typeof b.close === 'function') b.close(); };
 
 async function decodeImage(file) {
-    if (!isImageFile(file)) {
-        showStatus(`Error: "${file.name}" is not an image.`);
-        return null;
-    }
+    if (!isImageFile(file)) return null;
     try {
         return await createImageBitmap(file);
     } catch (e) {
@@ -86,13 +454,13 @@ async function decodeImage(file) {
             c.getContext('2d').drawImage(img, 0, 0);
             return c;
         } catch (e2) {
-            showStatus(`Error: can't read "${file.name}" as an image.`);
             return null;
         }
     }
 }
 
 const scratchCanvas = document.createElement('canvas');
+// Returns a fresh Uint8ClampedArray (its buffer can be transferred to the worker).
 function rasterize(src, w, h) {
     scratchCanvas.width = w;
     scratchCanvas.height = h;
@@ -104,7 +472,7 @@ function rasterize(src, w, h) {
 }
 
 // ------------------------------------------------------------------
-// Slots: square, click-or-drop image pickers with a cropped thumbnail
+// Slots
 // ------------------------------------------------------------------
 function drawCover(ctx, bmp, size) {
     const s = Math.max(size / bmp.width, size / bmp.height);
@@ -119,7 +487,7 @@ function createSlot({ caption = '', large = false, clearable = false, onFile, on
     wrap.className = 'slot-wrap';
     wrap.innerHTML = `
         <div class="slot${large ? ' slot-lg' : ''}" tabindex="0" role="button" title="Click or drop an image">
-            <canvas width="${THUMB_PX}" height="${THUMB_PX}"></canvas>
+            <canvas width="${THUMB_PX}" height="${THUMB_PX}" draggable="false"></canvas>
             ${clearable ? '<button type="button" class="slot-clear" title="Remove" aria-label="Remove">×</button>' : ''}
         </div>
         ${caption ? `<div class="slot-caption">${caption}</div>` : ''}
@@ -181,35 +549,6 @@ function createSlot({ caption = '', large = false, clearable = false, onFile, on
     return api;
 }
 
-function createSlider(label, { min, max, step, value }, onInput) {
-    const row = document.createElement('div');
-    row.className = 'slider-row';
-    row.innerHTML = `
-        <div class="d-flex justify-content-between small text-muted">
-            <span>${label}</span><strong class="val">${value.toFixed(2)}</strong>
-        </div>
-        <input type="range" class="form-range" min="${min}" max="${max}" step="${step}" value="${value}">`;
-    const input = row.querySelector('input');
-    const val = row.querySelector('.val');
-    input.addEventListener('pointerdown', () => { isSliderInteracting = true; });
-    input.addEventListener('input', () => {
-        const v = parseFloat(input.value);
-        val.textContent = v.toFixed(2);
-        onInput(v);
-        scheduleRender();
-    });
-    const stop = () => {
-        if (isSliderInteracting) {
-            isSliderInteracting = false;
-            scheduleRender(true);
-        }
-    };
-    input.addEventListener('pointerup', stop);
-    input.addEventListener('pointercancel', stop);
-    input.addEventListener('change', stop);
-    return row;
-}
-
 // ------------------------------------------------------------------
 // Base matcap
 // ------------------------------------------------------------------
@@ -224,8 +563,11 @@ async function loadBase(file) {
     if (seq !== baseSeq) { closeBmp(bmp); return; }
 
     const w = bmp.width, h = bmp.height;
-    baseData = new Uint8ClampedArray(rasterize(bmp, w, h));
+    const px = rasterize(bmp, w, h);
     srcW = w; srcH = h;
+    baseReady = true;
+    engine.send({ type: 'setBase', data: px, w, h }, [px.buffer]);
+
     baseSlot.setPreview(bmp);
     closeBmp(bmp);
 
@@ -234,12 +576,9 @@ async function loadBase(file) {
     baseInfo.hidden = false;
 
     layers.forEach(l => rebuildCache(l));
-    compositeDirty = true;
-    ensureComposite();
 
     generateBtn.disabled = false;
-    showStatus(`Loaded: ${file.name} (${w}×${h})`);
-    runGeneration(false);
+    triggerRender(false);
 }
 
 // ------------------------------------------------------------------
@@ -261,26 +600,23 @@ async function loadBackMatcap(file) {
     if (!bmp) return;
     closeBmp(backBmp);
     backBmp = bmp;
-    backW = bmp.width;
-    backH = bmp.height;
-    backData = new Uint8ClampedArray(rasterize(bmp, backW, backH));
+    const w = bmp.width, h = bmp.height;
+    const px = rasterize(bmp, w, h);
+    engine.send({ type: 'setBack', data: px, w, h }, [px.buffer]);
     backMatcapSlot.setPreview(bmp);
-    showStatus(`Back matcap loaded: ${file.name}`);
-    scheduleRender(true);
+    triggerRender(false);
 }
 
 function clearBackMatcap() {
     closeBmp(backBmp);
     backBmp = null;
-    backData = null;
-    backW = 0;
-    backH = 0;
+    engine.send({ type: 'setBack', data: null });
     backMatcapSlot.clear();
-    scheduleRender(true);
+    triggerRender(false);
 }
 
 // ------------------------------------------------------------------
-// Solid color helpers
+// Colour controls (solid / gradient) with alpha
 // ------------------------------------------------------------------
 function hexToRgb(hex) {
     hex = hex.replace(/^#/, '');
@@ -289,109 +625,87 @@ function hexToRgb(hex) {
     return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
 }
 
-function setSolidColor(hex, renderFinal = true) {
-    if (!hex) return;
-    if (backColorPicker) backColorPicker.value = hex;
-    const hexSpan = document.getElementById('backColorHex');
-    if (hexSpan) hexSpan.textContent = hex;
-    solidColorRgb = hexToRgb(hex);
-    scheduleRender(renderFinal);
+async function pickWithPipette(onColor) {
+    if (window.EyeDropper) {
+        try {
+            const res = await new EyeDropper().open();
+            if (res && res.sRGBHex) onColor(res.sRGBHex);
+        } catch (err) {}
+    }
 }
 
-if (backColorPicker) {
-    backColorPicker.addEventListener('input', () => setSolidColor(backColorPicker.value, false));
-    backColorPicker.addEventListener('change', () => setSolidColor(backColorPicker.value, true));
-}
+function bindColorControl(key, { picker, alpha, alphaVal, pipette, hexLabel }) {
+    if (!picker || !alpha) return;
+    const st = colorState[key];
 
-if (pipetteBtn) {
-    pipetteBtn.addEventListener('click', async () => {
-        if (window.EyeDropper) {
-            try {
-                const eyeDropper = new EyeDropper();
-                const res = await eyeDropper.open();
-                if (res && res.sRGBHex) {
-                    setSolidColor(res.sRGBHex, true);
-                }
-            } catch (err) {
-                // Cancelled by user
+    const apply = (isDraft, render = true) => {
+        st.rgb = hexToRgb(picker.value);
+        st.a = parseFloat(alpha.value) / 100;
+        if (hexLabel) hexLabel.textContent = picker.value;
+        if (alphaVal) alphaVal.textContent = Math.round(parseFloat(alpha.value));
+        alpha.style.setProperty('--alpha-color', picker.value);
+        if (render) triggerRender(isDraft);
+    };
+
+    // 'input' fires continuously while dragging inside the native picker;
+    // rendering is coalesced in the worker so this stays cheap.
+    picker.addEventListener('input', () => apply(true));
+    picker.addEventListener('change', () => apply(false));
+    alpha.addEventListener('input', () => apply(true));
+    alpha.addEventListener('change', () => apply(false));
+
+    if (pipette) {
+        pipette.addEventListener('click', () => {
+            if (window.EyeDropper) {
+                pickWithPipette(hex => { picker.value = hex; apply(false); });
+            } else {
+                picker.click();
             }
-        } else if (backColorPicker) {
-            backColorPicker.click();
-        }
-    });
+        });
+    }
+    apply(false, false);
 }
+
+bindColorControl('solid', {
+    picker: document.getElementById('backColorPicker'),
+    alpha: document.getElementById('backColorAlpha'),
+    alphaVal: document.getElementById('backColorAlphaVal'),
+    pipette: document.getElementById('pipetteBtn'),
+    hexLabel: document.getElementById('backColorHex')
+});
+bindColorControl('grad1', {
+    picker: document.getElementById('gradColor1Picker'),
+    alpha: document.getElementById('gradColor1Alpha'),
+    alphaVal: document.getElementById('gradColor1AlphaVal'),
+    pipette: document.getElementById('pipetteGrad1')
+});
+bindColorControl('grad2', {
+    picker: document.getElementById('gradColor2Picker'),
+    alpha: document.getElementById('gradColor2Alpha'),
+    alphaVal: document.getElementById('gradColor2AlphaVal'),
+    pipette: document.getElementById('pipetteGrad2')
+});
 
 // ------------------------------------------------------------------
-// Layers: each one is an extra matcap + blend mode + opacity,
-// composited over the base in list order.
+// Layers
 // ------------------------------------------------------------------
 const layers = [];
 let nextLayerId = 1;
 
+// Rasterize the layer's matcap at base resolution and hand it to the engine.
 function rebuildCache(layer) {
-    const bmp = layer.matcap;
-    layer.matcapPx = bmp && baseData ? rasterize(bmp, srcW, srcH) : null;
-}
-
-function getBlendFn(mode) {
-    switch (mode) {
-        case 'multiply':
-            return (b, l) => b * l;
-        case 'screen':
-            return (b, l) => 1 - (1 - b) * (1 - l);
-        case 'overlay':
-            return (b, l) => (b < 0.5 ? 2 * b * l : 1 - 2 * (1 - b) * (1 - l));
-        case 'hard-light':
-            return (b, l) => (l < 0.5 ? 2 * b * l : 1 - 2 * (1 - b) * (1 - l));
-        case 'add':
-            return (b, l) => Math.min(1, b + l);
-        case 'soft-light':
-            return (b, l) => (l <= 0.5 ? b - (1 - 2 * l) * b * (1 - b) : b + (2 * l - 1) * (Math.sqrt(Math.max(0, b)) - b));
-        case 'darken':
-            return (b, l) => Math.min(b, l);
-        case 'lighten':
-            return (b, l) => Math.max(b, l);
-        case 'difference':
-            return (b, l) => Math.abs(b - l);
-        case 'normal':
-        default:
-            return (b, l) => l;
+    if (layer.matcap && baseReady) {
+        const px = rasterize(layer.matcap, srcW, srcH);
+        layer.hasPx = true;
+        engine.send({ type: 'setLayer', id: layer.id, data: px }, [px.buffer]);
+    } else {
+        layer.hasPx = false;
+        engine.send({ type: 'setLayer', id: layer.id, data: null });
     }
-}
-
-function ensureComposite() {
-    if (!baseData || !compositeDirty) return;
-    compositeDirty = false;
-    const active = layers.filter(l => l.matcapPx && l.opacity > 0);
-    if (!active.length) { srcData = baseData; return; }
-
-    const out = new Uint8ClampedArray(baseData);
-    const n = srcW * srcH;
-    for (const l of active) {
-        const px = l.matcapPx, op = l.opacity, mode = l.blendMode || 'normal';
-        const blendFn = getBlendFn(mode);
-        for (let i = 0, j = 0; i < n; i++, j += 4) {
-            const a = (px[j + 3] / 255) * op;
-            if (a <= 0) continue;
-
-            const bR = out[j] / 255, bG = out[j + 1] / 255, bB = out[j + 2] / 255;
-            const lR = px[j] / 255,  lG = px[j + 1] / 255,  lB = px[j + 2] / 255;
-
-            const rR = blendFn(bR, lR);
-            const rG = blendFn(bG, lG);
-            const rB = blendFn(bB, lB);
-
-            out[j]     += (rR * 255 - out[j])     * a;
-            out[j + 1] += (rG * 255 - out[j + 1]) * a;
-            out[j + 2] += (rB * 255 - out[j + 2]) * a;
-        }
-    }
-    srcData = out;
 }
 
 function layersChanged() {
-    compositeDirty = true;
-    scheduleRender(true);
+    triggerRender(false);
 }
 
 async function setLayerImage(layer, slot, file) {
@@ -410,7 +724,7 @@ function clearLayerImage(layer) {
     layer.seq = (layer.seq || 0) + 1;
     closeBmp(layer.matcap);
     layer.matcap = null;
-    layer.matcapPx = null;
+    rebuildCache(layer);
     layersChanged();
 }
 
@@ -422,7 +736,6 @@ function renumberLayers() {
 
 function updateAddLayerState() {
     addLayerBtn.disabled = layers.length >= MAX_LAYERS;
-    addLayerBtn.title = addLayerBtn.disabled ? `Up to ${MAX_LAYERS} layers` : '';
 }
 
 function createLayerCard(layer) {
@@ -431,7 +744,7 @@ function createLayerCard(layer) {
     card.innerHTML = `
         <div class="d-flex justify-content-between align-items-center mb-2">
             <h3 class="layer-title mb-0">Layer</h3>
-            <button type="button" class="btn btn-sm btn-outline-danger remove-layer-btn" title="Remove layer" aria-label="Remove layer">×</button>
+            <button type="button" class="btn btn-sm btn-outline-danger remove-layer-btn" title="Remove layer">×</button>
         </div>
         <div class="d-flex align-items-center gap-3 mb-2">
             <div class="layer-slot-host"></div>
@@ -451,7 +764,14 @@ function createLayerCard(layer) {
                 </select>
             </div>
         </div>
-        <div class="layer-sliders"></div>`;
+        <div class="layer-sliders">
+            <div class="slider-row">
+                <div class="d-flex justify-content-between small text-muted">
+                    <span>Opacity</span><strong class="val">1.00</strong>
+                </div>
+                <input type="range" class="form-range" min="0" max="1" step="0.01" value="1">
+            </div>
+        </div>`;
 
     const matcapSlot = createSlot({
         caption: 'Matcap',
@@ -465,16 +785,18 @@ function createLayerCard(layer) {
     select.value = layer.blendMode || 'normal';
     select.addEventListener('change', () => {
         layer.blendMode = select.value;
-        compositeDirty = true;
-        scheduleRender(true);
+        layersChanged();
     });
 
-    card.querySelector('.layer-sliders').appendChild(
-        createSlider('Opacity', { min: 0, max: 1, step: 0.01, value: layer.opacity }, v => {
-            layer.opacity = v;
-            compositeDirty = true;
-        })
-    );
+    const opInput = card.querySelector('.layer-sliders input');
+    const opVal = card.querySelector('.layer-sliders .val');
+    opInput.addEventListener('input', () => {
+        const v = parseFloat(opInput.value);
+        opVal.textContent = v.toFixed(2);
+        layer.opacity = v;
+        triggerRender(true);
+    });
+    opInput.addEventListener('change', () => triggerRender(false));
 
     card.querySelector('.remove-layer-btn').addEventListener('click', () => removeLayer(layer, card));
     return card;
@@ -485,7 +807,7 @@ function addLayer() {
     const layer = {
         id: nextLayerId++,
         matcap: null,
-        matcapPx: null,
+        hasPx: false,
         blendMode: 'normal',
         opacity: 1,
         seq: 0,
@@ -502,7 +824,9 @@ function removeLayer(layer, card) {
     if (idx === -1) return;
     layer.removed = true;
     closeBmp(layer.matcap);
+    layer.matcap = null;
     layers.splice(idx, 1);
+    engine.send({ type: 'setLayer', id: layer.id, data: null });
     card.remove();
     renumberLayers();
     updateAddLayerState();
@@ -512,7 +836,7 @@ function removeLayer(layer, card) {
 addLayerBtn.addEventListener('click', addLayer);
 
 // ------------------------------------------------------------------
-// Drag & drop a base matcap anywhere on the main area
+// Drag & drop base matcap
 // ------------------------------------------------------------------
 mainPlaceholder.addEventListener('click', () => baseSlot.open());
 mainPlaceholder.addEventListener('keydown', e => {
@@ -539,27 +863,60 @@ window.addEventListener('drop', e => e.preventDefault());
 
 addLayer();
 
+// ------------------------------------------------------------------
+// Interactive UI & Unified Slider Binder
+// ------------------------------------------------------------------
+function setupInteractiveSlider(id, valId, formatFn = v => v) {
+    const input = document.getElementById(id);
+    const valSpan = document.getElementById(valId);
+    if (!input) return;
+
+    input.addEventListener('input', () => {
+        if (valSpan) valSpan.textContent = formatFn(parseFloat(input.value));
+        triggerRender(true);
+    });
+    input.addEventListener('change', () => triggerRender(false));
+}
+
+setupInteractiveSlider('rotX', 'rotXVal', v => Math.round(v));
+setupInteractiveSlider('rotY', 'rotYVal', v => Math.round(v));
+setupInteractiveSlider('rotZ', 'rotZVal', v => Math.round(v));
+
+const rotXEl = document.getElementById('rotX');
+const rotYEl = document.getElementById('rotY');
+if (rotXEl && rotYEl) {
+    const updateBallFromInputs = () => updateHandlePosition(parseFloat(rotXEl.value), parseFloat(rotYEl.value));
+    rotXEl.addEventListener('input', updateBallFromInputs);
+    rotYEl.addEventListener('input', updateBallFromInputs);
+}
+
+setupInteractiveSlider('matcapScale', 'matcapScaleVal', v => v.toFixed(2));
+setupInteractiveSlider('backMatcapScale', 'backMatcapScaleVal', v => v.toFixed(2));
+setupInteractiveSlider('gradInnerRadius', 'gradInnerRadiusVal', v => Math.round(v));
+setupInteractiveSlider('gradSharpness', 'gradSharpnessVal', v => Math.round(v));
+setupInteractiveSlider('backRadius', 'backRadiusVal', v => v.toFixed(2));
+setupInteractiveSlider('backEdgeSharpness', 'backEdgeSharpnessVal', v => Math.round(v));
+setupInteractiveSlider('globalSoftness', 'globalSoftnessVal', v => Math.round(v));
+
+// ------------------------------------------------------------------
+// Rotation & 3D Ball
+// ------------------------------------------------------------------
 function updateHandlePosition(pitchDeg, yawDeg) {
     if (!ballController || !ballHandle) return;
-    const rect = ballController.getBoundingClientRect();
-    const radius = rect.width / 2;
-    const normX = (yawDeg / 180); 
+    const radius = ballController.clientWidth / 2;
+    const normX = (yawDeg / 180);
     const normY = (-pitchDeg / 180);
-    const handleX = radius + normX * (radius - 6);
-    const handleY = radius + normY * (radius - 6);
-    ballHandle.style.left = `${handleX}px`;
-    ballHandle.style.top = `${handleY}px`;
+    ballHandle.style.left = `${radius + normX * (radius - 6)}px`;
+    ballHandle.style.top = `${radius + normY * (radius - 6)}px`;
 }
 
 function handleBallMove(e) {
-    if (!isBallInteracting || !ballController) return;
+    if (!isBallDragging || !ballController) return;
     const rect = ballController.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    let dx = (clientX - cx) / (rect.width / 2);
-    let dy = (clientY - cy) / (rect.height / 2);
+    let dx = (e.clientX - cx) / (rect.width / 2);
+    let dy = (e.clientY - cy) / (rect.height / 2);
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist > 1) {
         dx /= dist;
@@ -572,52 +929,28 @@ function handleBallMove(e) {
     document.getElementById('rotYVal').textContent = yaw;
     document.getElementById('rotXVal').textContent = pitch;
     updateHandlePosition(pitch, yaw);
-    scheduleRender();
+    triggerRender(true);
 }
 
 if (ballController) {
-    const startBallDrag = (e) => {
-        isBallInteracting = true;
+    // Pointer events + pointer capture: works for mouse/touch/pen and keeps
+    // receiving moves even when the cursor leaves the ball.
+    ballController.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        isBallDragging = true;
+        try { ballController.setPointerCapture(e.pointerId); } catch (err) {}
         handleBallMove(e);
-    };
-    ballController.addEventListener('mousedown', startBallDrag);
-    ballController.addEventListener('touchstart', startBallDrag);
-    window.addEventListener('mousemove', (e) => { if (isBallInteracting) handleBallMove(e); });
-    window.addEventListener('touchmove', (e) => { if (isBallInteracting) handleBallMove(e); });
+    });
+    ballController.addEventListener('pointermove', handleBallMove);
     const stopBallDrag = () => {
-        if (isBallInteracting) {
-            isBallInteracting = false;
-            scheduleRender(true);
+        if (isBallDragging) {
+            isBallDragging = false;
+            triggerRender(false);
         }
     };
-    window.addEventListener('mouseup', stopBallDrag);
-    window.addEventListener('touchend', stopBallDrag);
+    ballController.addEventListener('pointerup', stopBallDrag);
+    ballController.addEventListener('pointercancel', stopBallDrag);
 }
-
-['rotX', 'rotY', 'rotZ'].forEach(id => {
-    const input = document.getElementById(id);
-    const valSpan = document.getElementById(id + 'Val');
-    if (input && valSpan) {
-        input.addEventListener('mousedown', () => { isSliderInteracting = true; });
-        input.addEventListener('touchstart', () => { isSliderInteracting = true; });
-        input.addEventListener('input', () => {
-            valSpan.textContent = input.value;
-            if (id === 'rotX' || id === 'rotY') {
-                updateHandlePosition(parseFloat(rotXInput.value), parseFloat(rotYInput.value));
-            }
-            scheduleRender();
-        });
-        const stopSliderInput = () => {
-            if (isSliderInteracting) {
-                isSliderInteracting = false;
-                scheduleRender(true);
-            }
-        };
-        input.addEventListener('mouseup', stopSliderInput);
-        input.addEventListener('touchend', stopSliderInput);
-        input.addEventListener('change', stopSliderInput);
-    }
-});
 
 const resetRotationBtn = document.getElementById('resetRotation');
 if (resetRotationBtn) {
@@ -629,284 +962,51 @@ if (resetRotationBtn) {
         document.getElementById('rotYVal').textContent = 0;
         document.getElementById('rotZVal').textContent = 0;
         updateHandlePosition(0, 0);
-        scheduleRender(true);
+        triggerRender(false);
     });
-}
-
-const backBlurStrengthInput = document.getElementById('backBlurStrength');
-if (backBlurStrengthInput) {
-    const valSpan = document.getElementById('backBlurStrengthVal');
-    backBlurStrengthInput.addEventListener('mousedown', () => { isSliderInteracting = true; });
-    backBlurStrengthInput.addEventListener('touchstart', () => { isSliderInteracting = true; });
-    backBlurStrengthInput.addEventListener('input', () => {
-        if (valSpan) valSpan.textContent = parseFloat(backBlurStrengthInput.value).toFixed(1);
-        scheduleRender();
-    });
-    const stopBackBlurInput = () => {
-        if (isSliderInteracting) {
-            isSliderInteracting = false;
-            scheduleRender(true);
-        }
-    };
-    backBlurStrengthInput.addEventListener('mouseup', stopBackBlurInput);
-    backBlurStrengthInput.addEventListener('touchend', stopBackBlurInput);
-    backBlurStrengthInput.addEventListener('change', stopBackBlurInput);
 }
 
 function updateBackFillUI() {
     const mode = getBackFillMode();
     const colorArea = document.getElementById('backColorArea');
+    const gradArea = document.getElementById('backGradientArea');
     const matcapArea = document.getElementById('backMatcapArea');
-    const fadeArea = document.getElementById('backFadeRateArea');
 
     if (colorArea) colorArea.style.display = mode === 'color' ? 'block' : 'none';
+    if (gradArea) gradArea.style.display = mode === 'gradient' ? 'block' : 'none';
     if (matcapArea) matcapArea.style.display = mode === 'matcap' ? 'block' : 'none';
-    if (fadeArea) fadeArea.style.display = mode === 'matcap' ? 'none' : 'block';
 }
 
 document.querySelectorAll('input[name="backFill"]').forEach(input => {
     input.addEventListener('change', () => {
         updateBackFillUI();
-        scheduleRender(true);
+        triggerRender(false);
     });
 });
 updateBackFillUI();
+
+['faceSize', 'pixelFormat', 'flipRows'].forEach(name => {
+    document.querySelectorAll(`input[name="${name}"]`).forEach(input => {
+        input.addEventListener('change', () => triggerRender(false));
+    });
+});
 
 function getBackFillMode() {
     const checked = document.querySelector('input[name="backFill"]:checked');
     return checked ? checked.value : 'blur';
 }
 
-function getBackBlurStrength() {
-    return backBlurStrengthInput ? parseFloat(backBlurStrengthInput.value) : 1.0;
-}
-
-const globalSoftnessInput = document.getElementById('globalSoftness');
-if (globalSoftnessInput) {
-    const valSpan = document.getElementById('globalSoftnessVal');
-    globalSoftnessInput.addEventListener('mousedown', () => { isSliderInteracting = true; });
-    globalSoftnessInput.addEventListener('touchstart', () => { isSliderInteracting = true; });
-    globalSoftnessInput.addEventListener('input', () => {
-        if (valSpan) valSpan.textContent = globalSoftnessInput.value;
-        scheduleRender();
-    });
-    const stopGlobalSoftnessInput = () => {
-        if (isSliderInteracting) {
-            isSliderInteracting = false;
-            scheduleRender(true);
-        }
-    };
-    globalSoftnessInput.addEventListener('mouseup', stopGlobalSoftnessInput);
-    globalSoftnessInput.addEventListener('touchend', stopGlobalSoftnessInput);
-    globalSoftnessInput.addEventListener('change', stopGlobalSoftnessInput);
-}
-
-function getGlobalSoftness() {
-    return globalSoftnessInput ? parseFloat(globalSoftnessInput.value) / 100 : 0;
-}
-
-function scheduleRender(forceFinal = false) {
-    if (!srcData) return;
-    if (renderTimeout) clearTimeout(renderTimeout);
-
-    const isInteracting = isBallInteracting || isSliderInteracting;
-    if (isInteracting && !forceFinal) {
-        runGeneration(true);
-    } else {
-        showStatus('Rendering high quality...', 1000);
-        renderTimeout = setTimeout(() => {
-            runGeneration(false);
-        }, 250);
-    }
-}
-
-function sampleFast(u, v) {
-    const x = Math.min(Math.max((u * srcW) | 0, 0), srcW - 1);
-    const y = Math.min(Math.max((v * srcH) | 0, 0), srcH - 1);
-    const idx = (y * srcW + x) * 4;
-    return [srcData[idx], srcData[idx + 1], srcData[idx + 2], 255];
-}
-
-function bilinear(u, v) {
-    u = Math.min(Math.max(u, 0), 1);
-    v = Math.min(Math.max(v, 0), 1);
-    const x = u * (srcW - 1), y = v * (srcH - 1);
-    const x0 = Math.floor(x), x1 = Math.min(x0 + 1, srcW - 1);
-    const y0 = Math.floor(y), y1 = Math.min(y0 + 1, srcH - 1);
-    const fx = x - x0, fy = y - y0;
-    const idx = (xx, yy) => (yy * srcW + xx) * 4;
-    const out = [0, 0, 0, 255];
-    for (let ch = 0; ch < 3; ch++) {
-        const c00 = srcData[idx(x0, y0) + ch], c10 = srcData[idx(x1, y0) + ch];
-        const c01 = srcData[idx(x0, y1) + ch], c11 = srcData[idx(x1, y1) + ch];
-        const top = c00 * (1 - fx) + c10 * fx;
-        const bot = c01 * (1 - fx) + c11 * fx;
-        out[ch] = top * (1 - fy) + bot * fy;
-    }
-    return out;
-}
-
-const FACES = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
-function faceDir(face, a, b) {
-    switch (face) {
-        case 'px': return [1, b, -a];
-        case 'nx': return [-1, b, a];
-        case 'py': return [a, 1, -b];
-        case 'ny': return [a, -1, b];
-        case 'pz': return [a, b, 1];
-        case 'nz': return [-a, b, -1];
-    }
-}
-
-function sampleMatcap(u, v) {
-    const nu = (u - 0.5) * 2;
-    const nv = (v - 0.5) * 2;
-    const r = Math.sqrt(nu * nu + nv * nv);
-    if (r > 0.995) {
-        const k = 0.995 / r;
-        u = 0.5 + nu * k * 0.5;
-        v = 0.5 + nv * k * 0.5;
-    }
-    return bilinear(u, v);
-}
-
-function sampleBackMatcap(u, v) {
-    if (!backData) return [0, 0, 0, 255];
-    const nu = (u - 0.5) * 2;
-    const nv = (v - 0.5) * 2;
-    const r = Math.sqrt(nu * nu + nv * nv);
-    if (r > 0.995) {
-        const k = 0.995 / r;
-        u = 0.5 + nu * k * 0.5;
-        v = 0.5 + nv * k * 0.5;
-    }
-    u = Math.min(Math.max(u, 0), 1);
-    v = Math.min(Math.max(v, 0), 1);
-    const x = u * (backW - 1), y = v * (backH - 1);
-    const x0 = Math.floor(x), x1 = Math.min(x0 + 1, backW - 1);
-    const y0 = Math.floor(y), y1 = Math.min(y0 + 1, backH - 1);
-    const fx = x - x0, fy = y - y0;
-    const idx = (xx, yy) => (yy * backW + xx) * 4;
-    const out = [0, 0, 0, 255];
-    for (let ch = 0; ch < 3; ch++) {
-        const c00 = backData[idx(x0, y0) + ch], c10 = backData[idx(x1, y0) + ch];
-        const c01 = backData[idx(x0, y1) + ch], c11 = backData[idx(x1, y1) + ch];
-        const top = c00 * (1 - fx) + c10 * fx;
-        const bot = c01 * (1 - fx) + c11 * fx;
-        out[ch] = top * (1 - fy) + bot * fy;
-    }
-    return out;
-}
-
-function sampleBackFast(u, v) {
-    if (!backData) return [0, 0, 0, 255];
-    const x = Math.min(Math.max((u * backW) | 0, 0), backW - 1);
-    const y = Math.min(Math.max((v * backH) | 0, 0), backH - 1);
-    const idx = (y * backW + x) * 4;
-    return [backData[idx], backData[idx + 1], backData[idx + 2], 255];
-}
-
-function buildDiscClampedSource() {
-    const out = new Uint8ClampedArray(srcW * srcH * 4);
-    const cx = (srcW - 1) / 2, cy = (srcH - 1) / 2;
-    const R = Math.min(cx, cy);
-    for (let y = 0; y < srcH; y++) {
-        const ny = (y - cy) / R;
-        for (let x = 0; x < srcW; x++) {
-            const nx = (x - cx) / R;
-            const r = Math.sqrt(nx * nx + ny * ny);
-            let sx = x, sy = y;
-            if (r > 0.995) {
-                const k = 0.995 / r;
-                sx = cx + nx * k * R;
-                sy = cy + ny * k * R;
-            }
-            const c = bilinear(sx / (srcW - 1), sy / (srcH - 1));
-            const off = (y * srcW + x) * 4;
-            out[off] = c[0]; out[off + 1] = c[1]; out[off + 2] = c[2]; out[off + 3] = 255;
-        }
-    }
-    return out;
-}
-
-function buildMipPyramid(baseData, baseW, baseH) {
-    const levels = [{ data: baseData, w: baseW, h: baseH }];
-    let w = baseW, h = baseH, data = baseData;
-    while (w > 4 && h > 4 && levels.length < 8) {
-        const nw = Math.max(1, w >> 1), nh = Math.max(1, h >> 1);
-        const nd = new Uint8ClampedArray(nw * nh * 4);
-        for (let y = 0; y < nh; y++) {
-            const y0 = Math.min(y * 2, h - 1), y1 = Math.min(y * 2 + 1, h - 1);
-            for (let x = 0; x < nw; x++) {
-                const x0 = Math.min(x * 2, w - 1), x1 = Math.min(x * 2 + 1, w - 1);
-                for (let ch = 0; ch < 3; ch++) {
-                    const s = data[(y0 * w + x0) * 4 + ch] + data[(y0 * w + x1) * 4 + ch] +
-                              data[(y1 * w + x0) * 4 + ch] + data[(y1 * w + x1) * 4 + ch];
-                    nd[(y * nw + x) * 4 + ch] = s / 4;
-                }
-                nd[(y * nw + x) * 4 + 3] = 255;
-            }
-        }
-        levels.push({ data: nd, w: nw, h: nh });
-        w = nw; h = nh; data = nd;
-    }
-    return levels;
-}
-
-function bilinearLevel(level, u, v) {
-    u = Math.min(Math.max(u, 0), 1);
-    v = Math.min(Math.max(v, 0), 1);
-    const { data, w, h } = level;
-    const x = u * (w - 1), y = v * (h - 1);
-    const x0 = Math.floor(x), x1 = Math.min(x0 + 1, w - 1);
-    const y0 = Math.floor(y), y1 = Math.min(y0 + 1, h - 1);
-    const fx = x - x0, fy = y - y0;
-    const idx = (xx, yy) => (yy * w + xx) * 4;
-    const out = [0, 0, 0, 255];
-    for (let ch = 0; ch < 3; ch++) {
-        const c00 = data[idx(x0, y0) + ch], c10 = data[idx(x1, y0) + ch];
-        const c01 = data[idx(x0, y1) + ch], c11 = data[idx(x1, y1) + ch];
-        const top = c00 * (1 - fx) + c10 * fx;
-        const bot = c01 * (1 - fx) + c11 * fx;
-        out[ch] = top * (1 - fy) + bot * fy;
-    }
-    return out;
-}
-
-function sampleMipTrilinear(pyramid, u, v, levelFloat) {
-    const maxLevel = pyramid.length - 1;
-    levelFloat = Math.min(Math.max(levelFloat, 0), maxLevel);
-    const l0 = Math.floor(levelFloat), l1 = Math.min(l0 + 1, maxLevel);
-    const t = levelFloat - l0;
-    const c0 = bilinearLevel(pyramid[l0], u, v);
-    const c1 = bilinearLevel(pyramid[l1], u, v);
-    return [
-        c0[0] * (1 - t) + c1[0] * t,
-        c0[1] * (1 - t) + c1[1] * t,
-        c0[2] * (1 - t) + c1[2] * t,
-        255
-    ];
-}
-
-function buildBackFiller() {
-    const clamped = buildDiscClampedSource();
-    const pyramid = buildMipPyramid(clamped, srcW, srcH);
-    pyramid[0] = { data: srcData, w: srcW, h: srcH };
-    const flatColor = bilinearLevel(pyramid[pyramid.length - 1], 0.5, 0.5);
-    return { pyramid, flatColor };
-}
-
-function smoothstep01(t) {
-    t = Math.min(Math.max(t, 0), 1);
-    return t * t * (3 - 2 * t);
-}
-
-function sampleBackHemisphere(filler, u, v, dx, mode, strength) {
-    const t = smoothstep01(-dx * strength);
-    const maxLevel = filler.pyramid.length - 1;
-    const levelFloat = Math.pow(t, 1.3) * maxLevel;
-    return sampleMipTrilinear(filler.pyramid, u, v, levelFloat);
-}
+const readNum = (id, fallback, div = 1) => {
+    const el = document.getElementById(id);
+    return el ? parseFloat(el.value) / div : fallback;
+};
+const getBackMatcapScale = () => readNum('backMatcapScale', 1.0);
+const getBackRadius = () => readNum('backRadius', 1.0);
+const getBackEdgeSharpness = () => readNum('backEdgeSharpness', 0.25, 100);
+const getGradInnerRadius = () => readNum('gradInnerRadius', 0.5, 100);
+const getGradSharpness = () => readNum('gradSharpness', 0.0, 100);
+const getGlobalSoftness = () => readNum('globalSoftness', 0, 100);
+const getMatcapScale = () => readNum('matcapScale', 1.0);
 
 function getRotations() {
     const rx = parseFloat(rotXInput?.value || 0) * Math.PI / 180;
@@ -915,159 +1015,100 @@ function getRotations() {
     return { rx, ry, rz };
 }
 
-function rotateVector(x, y, z, rx, ry, rz) {
-    let y1 = y * Math.cos(rx) - z * Math.sin(rx);
-    let z1 = y * Math.sin(rx) + z * Math.cos(rx);
-    let x1 = x;
-
-    let x2 = x1 * Math.cos(ry) + z1 * Math.sin(ry);
-    let z2 = -x1 * Math.sin(ry) + z1 * Math.cos(ry);
-    let y2 = y1;
-
-    let x3 = x2 * Math.cos(rz) - y2 * Math.sin(rz);
-    let y3 = x2 * Math.sin(rz) + y2 * Math.cos(rz);
-    let z3 = z2;
-
-    return [x3, y3, z3];
+// ------------------------------------------------------------------
+// Render scheduling (main thread side)
+// ------------------------------------------------------------------
+function collectParams() {
+    const { rx, ry, rz } = getRotations();
+    const c = colorState;
+    return {
+        rx, ry, rz,
+        backMode: getBackFillMode(),
+        softness: getGlobalSoftness(),
+        scale: getMatcapScale(),
+        backScale: getBackMatcapScale(),
+        backRadius: getBackRadius(),
+        edgeSharp: getBackEdgeSharpness(),
+        gradSharp: getGradSharpness(),
+        gradInner: getGradInnerRadius(),
+        solid: [...c.solid.rgb, c.solid.a],
+        grad1: [...c.grad1.rgb, c.grad1.a],
+        grad2: [...c.grad2.rgb, c.grad2.a],
+        layers: layers
+            .filter(l => l.hasPx && l.opacity > 0)
+            .map(l => ({ id: l.id, opacity: l.opacity, blend: l.blendMode || 'normal' }))
+    };
 }
 
-function generateFaces(size, isFast = false) {
-    ensureComposite();
-    const result = {};
-    const { rx, ry, rz } = getRotations();
-    const backFillMode = getBackFillMode();
-    const backStrength = isFast ? 1.0 : getBackBlurStrength();
-    const globalSoftness = isFast ? 0 : getGlobalSoftness();
-    const scale = getMatcapScale();
+function requestRender(size, final) {
+    engine.send({ type: 'render', seq: ++renderSeq, size, final, p: collectParams() });
+}
 
-    const effectiveBackMode = (backFillMode === 'matcap' && !backData) ? 'blur' : backFillMode;
-    const needPyramid = !isFast && (effectiveBackMode === 'blur' || globalSoftness > 0);
-    const backFiller = needPyramid ? buildBackFiller() : null;
-
-    const SEAM_HALF = 0.12;
-
-    for (const face of FACES) {
-        const buf = new Uint8ClampedArray(size * size * 4);
-
-        for (let row = 0; row < size; row++) {
-            const b = 1 - 2 * row / (size - 1);
-
-            for (let col = 0; col < size; col++) {
-                const a = -1 + 2 * col / (size - 1);
-                let [dx, dy, dz] = faceDir(face, a, b);
-
-                const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                dx /= len; dy /= len; dz /= len;
-
-                [dx, dy, dz] = rotateVector(dx, dy, dz, rx, ry, rz);
-
-                const u_front = 0.5 - (dz * 0.5) / scale;
-                const v_front = 0.5 - (dy * 0.5) / scale;
-                
-                let color;
-
-                if (effectiveBackMode === 'matcap') {
-                    const u_back = 0.5 + (dz * 0.5) / scale;
-                    const v_back = 0.5 - (dy * 0.5) / scale;
-
-                    if (dx > SEAM_HALF) {
-                        color = isFast ? sampleFast(u_front, v_front) : sampleMatcap(u_front, v_front);
-                    } else if (dx < -SEAM_HALF) {
-                        color = isFast ? sampleBackFast(u_back, v_back) : sampleBackMatcap(u_back, v_back);
-                    } else {
-                        const t = smoothstep01((-dx + SEAM_HALF) / (2 * SEAM_HALF));
-                        const cFront = isFast ? sampleFast(u_front, v_front) : sampleMatcap(u_front, v_front);
-                        const cBack = isFast ? sampleBackFast(u_back, v_back) : sampleBackMatcap(u_back, v_back);
-                        color = [
-                            cFront[0] * (1 - t) + cBack[0] * t,
-                            cFront[1] * (1 - t) + cBack[1] * t,
-                            cFront[2] * (1 - t) + cBack[2] * t,
-                            255
-                        ];
-                    }
-                } else if (effectiveBackMode === 'color') {
-                    if (dx >= 0) {
-                        color = isFast ? sampleFast(u_front, v_front) : sampleMatcap(u_front, v_front);
-                    } else {
-                        const t = smoothstep01(-dx * backStrength);
-                        const cFront = isFast ? sampleFast(u_front, v_front) : sampleMatcap(u_front, v_front);
-                        color = [
-                            cFront[0] * (1 - t) + solidColorRgb[0] * t,
-                            cFront[1] * (1 - t) + solidColorRgb[1] * t,
-                            cFront[2] * (1 - t) + solidColorRgb[2] * t,
-                            255
-                        ];
-                    }
-                } else {
-                    // Blur mirror mode
-                    if (isFast) {
-                        color = sampleFast(u_front, v_front);
-                    } else if (dx < 0) {
-                        color = sampleBackHemisphere(backFiller, u_front, v_front, dx, 'blur', backStrength);
-                    } else {
-                        color = sampleMatcap(u_front, v_front);
-                    }
-
-                    if (!isFast && backFiller) {
-                        const SEAM_HALF_WIDTH = 0.16;
-                        const seamT = 1 - smoothstep01(Math.abs(dx) / SEAM_HALF_WIDTH);
-                        if (seamT > 0) {
-                            const seamSample = sampleMipTrilinear(backFiller.pyramid, u_front, v_front, 3.0);
-                            color = [
-                                color[0] * (1 - seamT) + seamSample[0] * seamT,
-                                color[1] * (1 - seamT) + seamSample[1] * seamT,
-                                color[2] * (1 - seamT) + seamSample[2] * seamT,
-                                255
-                            ];
-                        }
-                    }
-                }
-
-                if (!isFast && globalSoftness > 0 && backFiller) {
-                    const maxLevel = backFiller.pyramid.length - 1;
-                    const soft = sampleMipTrilinear(backFiller.pyramid, u_front, v_front, globalSoftness * maxLevel);
-                    color = [
-                        color[0] * (1 - globalSoftness) + soft[0] * globalSoftness,
-                        color[1] * (1 - globalSoftness) + soft[1] * globalSoftness,
-                        color[2] * (1 - globalSoftness) + soft[2] * globalSoftness,
-                        255
-                    ];
-                }
-
-                const off = (row * size + col) * 4;
-                buf[off] = color[0];
-                buf[off + 1] = color[1];
-                buf[off + 2] = color[2];
-                buf[off + 3] = 255;
-            }
-        }
-        result[face] = buf;
+// isDraft: quick low-res preview now, full-res result once input settles.
+function triggerRender(isDraft = false) {
+    if (!baseReady) return;
+    clearTimeout(renderTimer);
+    if (isDraft) {
+        requestRender(Math.min(DRAFT_SIZE, getFaceSize()), false);
+        renderTimer = setTimeout(() => requestRender(getFaceSize(), true), FINAL_DELAY);
+    } else {
+        requestRender(getFaceSize(), true);
     }
-    return result;
+}
+
+function handleEngineMessage(m) {
+    if (m.type === 'error') {
+        console.error('Render error:', m.message);
+        return;
+    }
+    if (m.type !== 'faces' || m.seq < shownSeq) return;
+    shownSeq = m.seq;
+    if (m.final) {
+        generatedFaces = m.faces;
+        generatedSize = m.size;
+    }
+    renderPreview(m.faces, m.size);
 }
 
 function renderPreview(faces, size) {
     const holder = document.getElementById('facesOutput');
-    holder.innerHTML = '';
     resultArea.style.display = 'block';
     const placeholder = document.getElementById('mainPlaceholder');
     if (placeholder) placeholder.style.display = 'none';
+
     for (const face of FACES) {
-        const cell = document.createElement('div');
-        cell.className = 'face-cell';
-        cell.dataset.face = face;
-        const canvas = document.createElement('canvas');
-        canvas.width = size; canvas.height = size;
-        const ctx = canvas.getContext('2d');
-        ctx.putImageData(new ImageData(faces[face], size, size), 0, 0);
-        const label = document.createElement('span');
-        label.textContent = face;
-        cell.appendChild(canvas);
-        cell.appendChild(label);
-        holder.appendChild(cell);
+        let cell = holder.querySelector(`.face-cell[data-face="${face}"]`);
+        let canvas;
+        if (!cell) {
+            cell = document.createElement('div');
+            cell.className = 'face-cell';
+            cell.dataset.face = face;
+            canvas = document.createElement('canvas');
+            canvas.draggable = false;
+            const label = document.createElement('span');
+            label.textContent = face;
+            cell.appendChild(canvas);
+            cell.appendChild(label);
+            holder.appendChild(cell);
+        } else {
+            canvas = cell.querySelector('canvas');
+        }
+
+        if (canvas.width !== size || canvas.height !== size) {
+            canvas.width = size;
+            canvas.height = size;
+        }
+        canvas.getContext('2d').putImageData(new ImageData(faces[face], size, size), 0, 0);
     }
 }
 
+const FACES = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
+
+generateBtn.addEventListener('click', () => triggerRender(false));
+
+// ------------------------------------------------------------------
+// Export & VTF Packing
+// ------------------------------------------------------------------
 const VTF_FORMATS = {
     RGBA8888: 0,
     BGR888: 3,
@@ -1162,7 +1203,7 @@ function encodeDXT1Block(src, size, bx, by) {
     const palette = [
         [r0, g0, b0],
         [r1, g1, b1],
-        [(2 * r0 + r1) / 3, (2 * g0 + g1) / 3, (b0 + 2 * b1) / 3],
+        [(2 * r0 + r1) / 3, (2 * g0 + g1) / 3, (2 * b0 + b1) / 3],
         [(r0 + 2 * r1) / 3, (g0 + 2 * g1) / 3, (b0 + 2 * b1) / 3],
     ];
 
@@ -1351,6 +1392,21 @@ function getMatPath() {
     return matInput ? matInput.value.trim() : 'material';
 }
 
+function getFaceSize() {
+    const checked = document.querySelector('input[name="faceSize"]:checked');
+    return checked ? parseInt(checked.value, 10) : 512;
+}
+
+function getPixelFormat() {
+    const checked = document.querySelector('input[name="pixelFormat"]:checked');
+    return checked ? checked.value : 'DXT1';
+}
+
+function getFlipRows() {
+    const checked = document.querySelector('input[name="flipRows"]:checked');
+    return checked ? checked.value === 'true' : false;
+}
+
 function crc32(buf) {
     let c, table = crc32.table || (crc32.table = (() => {
         const t = [];
@@ -1444,48 +1500,6 @@ function download(data, filename, mime) {
     a.remove();
 }
 
-function getFaceSize() {
-    const checked = document.querySelector('input[name="faceSize"]:checked');
-    return checked ? parseInt(checked.value, 10) : 512;
-}
-
-function getPixelFormat() {
-    const checked = document.querySelector('input[name="pixelFormat"]:checked');
-    return checked ? checked.value : 'DXT1';
-}
-
-function getFlipRows() {
-    const checked = document.querySelector('input[name="flipRows"]:checked');
-    return checked ? checked.value === 'true' : false;
-}
-
-function runGeneration(isFast = false) {
-    if (!srcData) return;
-
-    if (isFast) {
-        clearTimeout(genTimer);
-        const renderSize = 128;
-        const faces = generateFaces(renderSize, true);
-        renderPreview(faces, renderSize);
-    } else {
-        showStatus('Generating high quality...');
-        generateBtn.disabled = true;
-
-        clearTimeout(genTimer);
-        genTimer = setTimeout(() => {
-            const targetSize = getFaceSize();
-            const faces = generateFaces(targetSize, false);
-            generatedFaces = faces;
-            generatedSize = targetSize;
-            renderPreview(faces, targetSize);
-            showStatus('Done!');
-            generateBtn.disabled = false;
-        }, 10);
-    }
-}
-
-generateBtn.addEventListener('click', () => runGeneration(false));
-
 document.getElementById('dlVtf').addEventListener('click', () => {
     if (!generatedFaces) return;
     const flip = getFlipRows();
@@ -1530,27 +1544,3 @@ document.getElementById('dlPngZip').addEventListener('click', () => {
     const matPath = getMatPath();
     download(zip, matPath.split('/').pop() + '_faces.zip', 'application/zip');
 });
-
-const matcapScaleInput = document.getElementById('matcapScale');
-if (matcapScaleInput) {
-    const valSpan = document.getElementById('matcapScaleVal');
-    matcapScaleInput.addEventListener('mousedown', () => { isSliderInteracting = true; });
-    matcapScaleInput.addEventListener('touchstart', () => { isSliderInteracting = true; });
-    matcapScaleInput.addEventListener('input', () => {
-        if (valSpan) valSpan.textContent = parseFloat(matcapScaleInput.value).toFixed(2);
-        scheduleRender();
-    });
-    const stopScaleInput = () => {
-        if (isSliderInteracting) {
-            isSliderInteracting = false;
-            scheduleRender(true);
-        }
-    };
-    matcapScaleInput.addEventListener('mouseup', stopScaleInput);
-    matcapScaleInput.addEventListener('touchend', stopScaleInput);
-    matcapScaleInput.addEventListener('change', stopScaleInput);
-}
-
-function getMatcapScale() {
-    return matcapScaleInput ? parseFloat(matcapScaleInput.value) : 1.0;
-}
