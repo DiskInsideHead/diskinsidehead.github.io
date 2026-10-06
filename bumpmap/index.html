@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DIH - BumpMap</title>
+  <link rel="icon" type="image/x-icon" href="../styles/dih.ico">
+  <link crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" rel="stylesheet">
+  <link href="../styles/style.css" rel="stylesheet">
+  <link href="../styles/foundation-icons.css" rel="stylesheet">
+  <style>
+    /* ---------- Layout: тот же каркас, что у matcap2EnvMap ---------- */
+    html, body { height: 100%; overflow: hidden; }
+    body { margin: 0; }
+    .app-shell { display: flex; align-items: stretch; height: 100vh; }
+    .app-sidebar {
+      flex: 0 0 400px; width: 400px; height: 100%;
+      overflow-y: auto; padding: 20px;
+      border-right: 1px solid #dee2e6; background: #fff; text-align: left;
+    }
+    .app-sidebar h2 { font-size: 1.3rem; }
+    .app-sidebar .settings-area { margin-bottom: 14px; }
+    .app-sidebar .settings-area h3 { font-size: 1rem; margin-top: 10px; margin-bottom: 8px; }
+    .app-sidebar .settings-area h3:first-child { margin-top: 0; }
+    .section-title { font-size: 1rem; margin: 16px 0 6px; }
+    .sidebar-actions {
+      position: sticky; bottom: 0; background: #fff;
+      padding-top: 10px; margin-top: 6px; z-index: 10;
+    }
+    .app-main {
+      flex: 1; min-width: 0; height: 100%; padding: 24px;
+      display: flex; flex-direction: column;
+    }
+    #render_view {
+      flex: 1; min-height: 0; width: 100%;
+      border-radius: 12px; border: 1px solid #dee2e6;
+      background: radial-gradient(circle at 50% 40%, #ffffff 0%, #eef1f4 70%, #e2e7ec 100%);
+      overflow: hidden; position: relative;
+    }
+    #render_view canvas { display: block; }
+    [hidden] { display: none !important; }
+
+    /* ---------- Загрузка высоты ---------- */
+    .base-row { display: flex; align-items: center; gap: 12px; }
+    #height_map {
+      position: relative; flex: none; width: 120px; height: 120px;
+      border-radius: 8px; border: 1px dashed #adb5bd; background: #e9ecef;
+      cursor: pointer; overflow: hidden; transition: border-color .15s, background .15s;
+    }
+    #height_map:hover, #height_map.dragover { border-color: #286090; background: #dbe7f3; }
+    #height_map canvas { width: 100%; height: 100%; display: block; object-fit: contain; }
+    .base-info { min-width: 0; font-size: .85rem; flex: 1; }
+    .base-hint { color: #6c757d; }
+    #size { border: 0; background: transparent; padding: 0; width: 100%; color: #6c757d; font-size: .85rem; outline: none; }
+    #deband_status { font-size: .75rem; color: #286090; min-height: 1.1em; }
+
+    /* ---------- Контролы из оригинала, подогнанные под узкий сайдбар ---------- */
+    .app-sidebar .input-group-text { font-size: .85rem; }
+    .app-sidebar .form-control { min-width: 0; }
+    .app-sidebar .form-range { width: 100%; }
+    .app-sidebar .preview_img { width: 100%; max-width: 100%; border-radius: 6px; background: #1a1a2e; display: block; }
+    .app-sidebar .tab_button { flex: 1; font-size: .8rem; padding: .3rem .2rem; }
+    .app-sidebar .column_top { margin-bottom: 4px; }
+    .app-sidebar, .app-main { -webkit-user-select: none; user-select: none; }
+    .app-sidebar input[type="text"] { -webkit-user-select: text; user-select: text; }
+    canvas, img { -webkit-user-drag: none; user-drag: none; }
+
+    @media (max-width: 900px) {
+      html, body { height: auto; overflow: visible; }
+      .app-shell { height: auto; flex-direction: column; }
+      .app-sidebar { width: 100%; flex: none; height: auto; overflow-y: visible; border-right: none; border-bottom: 1px solid #dee2e6; }
+      .sidebar-actions { position: static; }
+      .app-main { height: auto; padding: 16px; }
+      #render_view { flex: none; height: 70vw; min-height: 320px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="app-sidebar">
+      <div id="drop-area">
+        <h2>Bump → Normal / Displacement</h2>
+      </div>
+
+      <!-- Карта высот -->
+      <div class="settings-area p-3 border rounded bg-light">
+        <h3>Height map</h3>
+        <div class="base-row">
+          <div id="height_map" title="Нажми или перетащи файл">
+            <input id="select_file_height" type="file" accept="image/*, .tga" style="position:absolute;visibility:hidden;">
+            <canvas id="height_canvas" onclick="select_file_height.click()"></canvas>
+          </div>
+          <div class="base-info">
+            <div class="base-hint">Нажми на превью или перетащи картинку</div>
+            <input id="size" type="text" readonly>
+          </div>
+        </div>
+        <div hidden>
+          <input id="select_multiple_height_files" type="file" accept="image/*, .tga" multiple style="position:absolute;visibility:hidden;">
+        </div>
+        <button type="button" class="btn btn-outline-primary btn-sm w-100 mt-3" onclick="select_multiple_height_files.click()">Пакетно: выбрать несколько и скачать всё</button>
+
+        <h3 class="mt-3">De-band (убрать ступеньки)</h3>
+        <div class="input-group mb-1">
+          <div class="input-group-text" style="width: 30%;">Strength</div>
+          <div class="input-group-text" style="width: 50%;">
+            <input id="deband_slider" class="form-range" type="range" value="24" min="0" max="96" step="1"
+                   oninput="document.getElementById('deband_nmb').value = this.value;"
+                   onchange="NMO_HeightPrep.setIterations(this.value, NMO_FileDrop.applyLoadedHeight);">
+          </div>
+          <input class="form-control" id="deband_nmb" type="number" step="1" min="0" max="96" style="width: 40px;" value="24"
+                 onchange="document.getElementById('deband_slider').value = this.value; NMO_HeightPrep.setIterations(this.value, NMO_FileDrop.applyLoadedHeight);">
+        </div>
+        <div class="base-hint" style="font-size:.75rem">Восстанавливает плавные склоны из 8-битных террас до расчёта нормалей. 0 — выключено.</div>
+        <div id="deband_status"></div>
+      </div>
+
+      <!-- Скрытый режим "по картинкам" (нужен коду, на странице не используется) -->
+      <div hidden>
+        <div class="view" id="pictures_map" style="display: inline-block;float: left; display:none;">
+          <input id="select_file_above" type="file" accept="image/*, .tga" style="position:absolute;visibility:hidden;"> <input id="select_file_left" type="file" accept="image/*, .tga" style="position:absolute;visibility:hidden;"> <input id="select_file_right" type="file" accept="image/*, .tga" style="position:absolute;visibility:hidden;"> <input id="select_file_below" type="file" accept="image/*, .tga" style="position:absolute;visibility:hidden;">
+          <div class="pictures_view">
+            <div class="pictures_view_row">
+              <div class="pictures_view_cell"></div>
+              <div class="pictures_view_cell drop_cell" id="picture_below_drop">
+                <canvas id="picture_canvas_below" style="width:100%; height: 100%; cursor: pointer;" onclick="select_file_below.click()" onmouseover=""></canvas>
+              </div>
+            </div>
+            <div class="pictures_view_row">
+              <div class="pictures_view_cell drop_cell" id="picture_right_drop">
+                <canvas id="picture_canvas_right" style="width:100%; height: 100%; cursor: pointer;" onclick="select_file_right.click()" onmouseover=""></canvas>
+              </div>
+              <div class="pictures_view_cell"></div>
+              <div class="pictures_view_cell drop_cell" id="picture_left_drop">
+                <canvas id="picture_canvas_left" style="width:100%; height: 100%; cursor: pointer;" onclick="select_file_left.click()" onmouseover=""></canvas>
+              </div>
+            </div>
+            <div class="pictures_view_row">
+              <div class="pictures_view_cell"></div>
+              <div class="pictures_view_cell drop_cell" id="picture_above_drop">
+                <canvas id="picture_canvas_above" style="width:100%; height: 100%; cursor: pointer;" onclick="select_file_above.click()" onmouseover=""></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="view" id="photo_map" style="display: none;">
+          <canvas id="photo_canvas"></canvas>
+        </div>
+        
+      </div>
+
+      <!-- Настройки выбранной карты -->
+      <div class="settings-area p-3 border rounded bg-light">
+        <h3>Texture settings</h3>
+        <div class="column_top" id="normal_settings" style="width: 100%;">
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Strength
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="strength_slider" onchange="NMO_NormalMap.setNormalSetting('strength', this.value); document.getElementById('strength_nmb').value = this.value;" oninput="NMO_NormalMap.setNormalSetting('strength', this.value); document.getElementById('strength_nmb').value = this.value;" class="form-range" type="range" value='2.5' min='0.01' max='5' step='0.01'>
+            </div><input class="form-control" id="strength_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='2.5' min='0.01' max='5' onchange="NMO_NormalMap.setNormalSetting('strength', this.value); document.getElementById('strength_slider').value = this.value;">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Level
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="level_slider" onchange="NMO_NormalMap.setNormalSetting('level', this.value); document.getElementById('level_nmb').value = this.value;" oninput="NMO_NormalMap.setNormalSetting('level', this.value); document.getElementById('level_nmb').value = this.value;" class="form-range" type="range" value='7.0' min='4' max='10' step='0.1'>
+            </div><input class="form-control" id="level_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='7.0' onchange="NMO_NormalMap.setNormalSetting('level', this.value); document.getElementById('level_slider').value = this.value;">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Blur/Sharp
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="blur_sharp_slider" onchange="NMO_NormalMap.setNormalSetting('blur_sharp', this.value); document.getElementById('blur_sharp_nmb').value = this.value;" oninput="NMO_NormalMap.setNormalSetting('blur_sharp', this.value); document.getElementById('blur_sharp_nmb').value = this.value;" class="form-range" type="range" value='0' min='-32' max='32' step='1'>
+            </div><input class="form-control" id="blur_sharp_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='0' onchange="NMO_NormalMap.setNormalSetting('blur_sharp', this.value); document.getElementById('blur_sharp_slider').value = this.value;">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Filter
+            </div>
+            <div class="input-group-text" style="width: 60%;">
+              <select class="form-select" onchange="NMO_NormalMap.setNormalSetting('type', this.value)">
+                <option value="sobel">
+                  Sobel
+                </option>
+                <option value="scharr">
+                  Scharr
+                </option>
+              </select>
+            </div>
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Invert
+            </div>
+            <div class="input-group-text" style="flex: 1;">
+              <div class="form-check">
+                <input class="form-check-input" id="invert_r" type="checkbox" onclick="NMO_NormalMap.invertRed()"> <label class="form-check-label" for="invert_r">R</label>
+              </div>
+            </div>
+            <div class="input-group-text" style="flex: 1;">
+              <div class="form-check">
+                <input class="form-check-input" id="invert_g" type="checkbox" onclick="NMO_NormalMap.invertGreen()"> <label class="form-check-label" for="invert_g">G</label>
+              </div>
+            </div>
+            <div class="input-group-text" style="flex: 1;">
+              <div class="form-check">
+                <input class="form-check-input" id="invert_h" type="checkbox" onclick="NMO_NormalMap.invertSource()"> <label class="form-check-label" for="invert_h">Height</label>
+              </div>
+            </div>
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Z Range
+            </div>
+            <div class="input-group-text" style="width: 60%;">
+              <div class="form-check">
+                <input class="form-check-input" id="height_offset" type="checkbox" onclick="NMO_NormalMap.heightOffset()"> <label class="form-check-label" for="height_offset">-1 to +1</label>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="column_top" id="displacement_settings" style="display: none; width: 100%;">
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Contrast
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="dm_contrast_slider" onchange="NMO_DisplacementMap.setDisplacementSetting('contrast', this.value); document.getElementById('dm_contrast_nmb').value = this.value;" oninput="NMO_DisplacementMap.setDisplacementSetting('contrast', this.value); document.getElementById('dm_contrast_nmb').value = this.value;" class="form-range" type="range" value='-0.5' min='-1' max='1' step='0.01'>
+            </div><input class="form-control" id="dm_contrast_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='-0.5' onchange="document.getElementById('dm_contrast_slider').value = this.value; NMO_DisplacementMap.setDisplacementSetting('contrast', this.value);">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Blur/Sharp
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="dm_blur_sharp_slider" onchange="NMO_DisplacementMap.setDisplacementSetting('blur_sharp', this.value); document.getElementById('dm_blur_sharp_nmb').value = this.value;" oninput="NMO_DisplacementMap.setDisplacementSetting('blur_sharp', this.value); document.getElementById('dm_blur_sharp_nmb').value = this.value;" class="form-range" type="range" value='0' min='-32' max='32' step='1'>
+            </div><input class="form-control" id="dm_blur_sharp_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='0' onchange="NMO_DisplacementMap.setDisplacementSetting('blur_sharp', this.value); document.getElementById('dm_blur_sharp_slider').value = this.value;">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Invert
+            </div>
+            <div class="input-group-text" style="width: 60%;">
+              <input class="form-check-input" id="invert_height" type="checkbox" onclick="NMO_DisplacementMap.invertDisplacement(); NMO_DisplacementMap.setDisplacementContrast(document.getElementById('dm_contrast_nmb').value);">
+            </div>
+          </div>
+        </div>
+        
+        <div class="column_top" id="ao_settings" style="display: none; width: 100%;">
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Strength
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="ao_strength_slider" onchange="NMO_AmbientOccMap.setAOSetting('strength', this.value); document.getElementById('ao_strength_nmb').value = this.value;" oninput="NMO_AmbientOccMap.setAOSetting('strength', this.value); document.getElementById('ao_strength_nmb').value = this.value;" class="form-range" type="range" value='0.5' min='0' max='1' step='0.01'>
+            </div><input class="form-control" id="ao_strength_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='0.5' onchange="NMO_AmbientOccMap.setAOSetting('strength', this.value); document.getElementById('ao_strength_slider').value = this.value;">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Mean
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="ao_mean_slider" onchange="NMO_AmbientOccMap.setAOSetting('mean', this.value); document.getElementById('ao_mean_nmb').value = this.value;" oninput="NMO_AmbientOccMap.setAOSetting('mean', this.value); document.getElementById('ao_mean_nmb').value = this.value;" class="form-range" type="range" value='1' min='0' max='1' step='0.01'>
+            </div><input class="form-control" id="ao_mean_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='1' onchange="NMO_AmbientOccMap.setAOSetting('mean', this.value); document.getElementById('ao_mean_slider').value = this.value;">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Range
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="ao_range_slider" onchange="NMO_AmbientOccMap.setAOSetting('range', this.value); document.getElementById('ao_range_nmb').value = this.value;" oninput="NMO_AmbientOccMap.setAOSetting('range', this.value); document.getElementById('ao_range_nmb').value = this.value;" class="form-range" type="range" value='1' min='0' max='1' step='0.01'>
+            </div><input class="form-control" id="ao_range_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='1' onchange="NMO_AmbientOccMap.setAOSetting('range', this.value); document.getElementById('ao_range_slider').value = this.value;">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Blur/Sharp
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="ao_blur_sharp_slider" onchange="NMO_AmbientOccMap.setAOSetting('blur_sharp', this.value); document.getElementById('ao_blur_sharp_nmb').value = this.value;" oninput="NMO_AmbientOccMap.setAOSetting('blur_sharp', this.value); document.getElementById('ao_blur_sharp_nmb').value = this.value;" class="form-range" type="range" value='0' min='-32' max='32' step='1'>
+            </div><input class="form-control" id="ao_blur_sharp_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='0' onchange="NMO_AmbientOccMap.setAOSetting('blur_sharp', this.value); document.getElementById('ao_blur_sharp_slider').value = this.value;">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Invert
+            </div>
+            <div class="input-group-text" style="width: 60%;">
+              <input class="form-check-input" id="invert_AO" type="checkbox" onclick="NMO_AmbientOccMap.invertAO();">
+            </div>
+          </div>
+        </div>
+        
+        <div class="column_top" id="specular_settings" style="display: none; width: 100%;">
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Strength
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="specular_strength_slider" onchange="NMO_SpecularMap.setSpecularSetting('spec_strength', this.value); document.getElementById('specular_strength_nmb').value = this.value;" oninput="NMO_SpecularMap.setSpecularSetting('spec_strength', this.value); document.getElementById('specular_strength_nmb').value = this.value;" class="form-range" type="range" value='1' min='0' max='1' step='0.01'>
+            </div><input class="form-control" id="specular_strength_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='1' onchange="NMO_SpecularMap.setSpecularSetting('spec_strength', this.value); document.getElementById('specular_strength_slider').value = this.value;">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Mean
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="specular_mean_slider" onchange="NMO_SpecularMap.setSpecularSetting('spec_mean', this.value); document.getElementById('specular_mean_nmb').value = this.value;" oninput="NMO_SpecularMap.setSpecularSetting('spec_mean', this.value); document.getElementById('specular_mean_nmb').value = this.value;" class="form-range" type="range" value='1' min='0' max='1' step='0.01'>
+            </div><input class="form-control" id="specular_mean_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='1' onchange="NMO_SpecularMap.setSpecularSetting('spec_mean', this.value); document.getElementById('specular_mean_slider').value = this.value;">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Range
+            </div>
+            <div class="input-group-text" style="width: 40%;">
+              <input id="specular_range_slider" onchange="NMO_SpecularMap.setSpecularSetting('spec_range', this.value); document.getElementById('specular_range_nmb').value = this.value;" oninput="NMO_SpecularMap.setSpecularSetting('spec_range', this.value); document.getElementById('specular_range_nmb').value = this.value;" class="form-range" type="range" value='1' min='0' max='1' step='0.01'>
+            </div><input class="form-control" id="specular_range_nmb" type="number" step="0.01" style="width: 40px; vertical-align: middle;" value='1' onchange="NMO_SpecularMap.setSpecularSetting('spec_range', this.value); document.getElementById('specular_range_slider').value = this.value;">
+          </div>
+          <div class="input-group mb-2">
+            <div class="input-group-text" style="width: 40%;">
+              Falloff
+            </div>
+            <div class="input-group-text" style="width: 60%;">
+              <select class="form-select" onchange="NMO_SpecularMap.setSpecularSetting('spec_falloff', this.value)">
+                <option value="no">
+                  No
+                </option>
+                <option value="linear" selected>
+                  Linear
+                </option>
+                <option value="square">
+                  Square
+                </option>
+              </select>
+            </div>
+          </div>
+        </div>
+        
+      </div>
+
+      <div class="settings-area p-3 border rounded bg-light">
+        <h3>Preview</h3>
+        <div class="texture_container">
+          <div class="mb-3"></div>
+          <div class="btn-group">
+            <button class="btn btn-outline-primary tab_button" id="tab_btn_normal" onclick="NMO_Main.activate_texture('normal');" disabled>Normal</button> <button class="btn btn-outline-primary tab_button" id="tab_btn_displace" onclick="NMO_Main.activate_texture('displace');">Displacement</button> <button class="btn btn-outline-primary tab_button" id="tab_btn_ao" onclick="NMO_Main.activate_texture('ao');">AmbientOcc</button> <button class="btn btn-outline-primary tab_button" id="tab_btn_specular" onclick="NMO_Main.activate_texture('specular');">Specular</button>
+          </div>
+          <div class="mb-3"></div>
+          <div class="view" id="normal_map">
+            <canvas class="preview_img" id="normal_img"></canvas>
+          </div>
+          <div class="view" id="displacement_map" style="display: none;">
+            <canvas class="preview_img" id="displace_img"></canvas>
+          </div>
+          <div class="view" id="ao_map" style="display: none;">
+            <canvas class="preview_img" id="ao_img"></canvas>
+          </div>
+          <div class="view" id="specular_map" style="display: none;">
+            <canvas class="preview_img" id="specular_img"></canvas>
+          </div>
+        </div>
+        
+      </div>
+
+      <!-- 3D preview -->
+      <div class="settings-area p-3 border rounded bg-light">
+        <h3>3D preview</h3>
+        
+        <div class="input-group mb-2 mr-sm-2">
+          <div class="input-group-text" style="width: 50%">
+            Model
+          </div><select class="form-select" id="model" onchange="NMO_RenderView.setModel(document.getElementById('model').value)">
+            <option selected>
+              Cube
+            </option>
+            <option>
+              Plane
+            </option>
+            <option>
+              Sphere
+            </option>
+            <option>
+              Cylinder
+            </option>
+            <option>
+              Teapot
+            </option>
+            <option>
+              Custom
+            </option>
+          </select> <input id="select_model_file" type="file" accept=".obj" style="position:absolute;visibility:hidden;"> <input class="btn btn-outline-secondary" type="button" id="browseModelButton" value="Load .obj" onclick="select_model_file.click();">
+        </div>
+        <div class="input-group mb-2 mr-sm-2">
+          <div class="input-group-text" style="width: 100%">
+            <div class="form-check">
+              <input class="form-check-input" id="input_rot" type="checkbox" value="rotation" onclick="NMO_RenderView.toggleRotation()" checked> <label class="form-check-label" for="input_rot">Rotation</label>
+            </div>
+          </div>
+        </div>
+        <div class="input-group mb-2 mr-sm-2">
+          <div class="input-group-text" style="width: 50%">
+            <div class="form-check">
+              <input class="form-check-input" id="input_diffuse" type="checkbox" value="Diffuse" onclick="NMO_RenderView.toggleDiffuse()" disabled> <label class="form-check-label" for="input_diffuse">Diffuse</label>
+            </div>
+          </div><input id="select_diffuse_file" type="file" accept="image/*, .tga" style="position:absolute;visibility:hidden;"> <input class="btn btn-outline-secondary" style="flex: 1;" type="button" id="browseDiffuseButton" value="Load..." onclick="select_diffuse_file.click();">
+        </div>
+        <div class="input-group mb-2 mr-sm-2">
+          <div class="input-group-text" style="width: 40%">
+            <div class="form-check">
+              <input class="form-check-input" id="input_displacement" type="checkbox" value="displacement" onclick="NMO_RenderView.setDisplacement(document.getElementById('input_displacement').checked)" style="vertical-align: middle;" checked> <label class="form-check-label" for="input_displacement">Displacement</label>
+            </div>
+          </div>
+          <div class="input-group-text" style="width: 40%">
+            <input class="form-range" id="dm_strength_slider" onchange="NMO_DisplacementMap.setDisplaceStrength( this.value); document.getElementById('dm_strength_nmb').value = this.value;" oninput="NMO_DisplacementMap.setDisplaceStrength( this.value); document.getElementById('dm_strength_nmb').value = this.value;" type="range" value='0.3' min='-1' max='1' step='0.01'>
+          </div><input class="form-control" id="dm_strength_nmb" type="number" step="0.01" style="width:40px;vertical-align: middle;" value='0.3' onchange="NMO_DisplacementMap.setDisplaceStrength(this.value); document.getElementById('dm_strength_slider').value = this.value;">
+        </div>
+        <div class="input-group mb-2 mr-sm-2">
+          <div class="input-group-text" style="flex: 1;">
+            <div class="form-check">
+              <input class="form-check-input" id="input_normal" type="checkbox" value="normal" onclick="NMO_RenderView.toggleNormal()" checked> <label class="form-check-label" for="input_normal">Normal</label>
+            </div>
+          </div>
+          <div class="input-group-text" style="flex: 1;">
+            <div class="form-check">
+              <input class="form-check-input" id="input_ao" type="checkbox" value="ao" onclick="NMO_RenderView.toggleAO()" checked> <label class="form-check-label" for="input_ao">AO</label>
+            </div>
+          </div>
+          <div class="input-group-text" style="flex: 1;">
+            <div class="form-check">
+              <input class="form-check-input" id="input_specular" type="checkbox" value="specular" onclick="NMO_RenderView.toggleSpecular()" checked> <label class="form-check-label" for="input_specular">Specular</label>
+            </div>
+          </div>
+        </div>
+        <div class="input-group mb-2 mr-sm-2">
+          <div class="input-group-text" style="flex: 1;">
+            <div class="form-check">
+              <input class="form-check-input" id="input_enviroment" type="checkbox" value="normal" onclick="NMO_RenderView.setEnvironment(document.getElementById('input_enviroment').checked)"> <label class="form-check-label" for="input_enviroment">Environment</label>
+            </div>
+          </div>
+
+      </div>
+      </div>
+
+      <div class="settings-area p-3 border rounded bg-light">
+        <h3>Export</h3>
+        <div class="input-group mb-3">
+          <input id="file_name" type="text" class="form-control" placeholder="NormalMap" size="12"> <select id="file_type" class="form-select" onchange="NMO_Main.switchJPGQual();">
+            <option value="png" selected>
+              PNG
+            </option>
+            <option value="jpg">
+              JPG
+            </option>
+            <option value="tiff">
+              TIFF
+            </option>
+          </select>
+        </div>
+        <div class="mb-3" id="file_jpg_qual" style="display:none;">
+          Quality <input type="number" id="file_jpg_qual_nmb" class="form-control" step="1" style="width: 60px; display: inline;" min='0' max='100' value="95" size="4"> %
+        </div>
+        <div class="input-group mb-2" id="total_transparency">
+          <div class="input-group-text" style="width: 50%;">
+            Opacity
+          </div><input type="number" id="transparency_nmb" style="flex: 1;" class="form-control" step="1" value='100' max='100' min='0'>
+          <div class="input-group-text" style="flex: 1;">
+            %
+          </div>
+        </div>
+        
+      </div>
+
+      <div class="sidebar-actions">
+        <div class="mb-3">
+          <button id="download" class="btn btn-success" style="width: 8em;"><b>Download</b></button> <button id="download_all" class="btn btn-success" style="width: 5em;"><b>All</b></button>
+        </div>
+
+      </div>
+    </aside>
+
+    <main class="app-main">
+      <div id="render_view"></div>
+    </main>
+  </div>
+
+  <script src="../styles/script.js"></script>
+  <script src="javascripts/extern/jquery-2.1.1.min.js"></script>
+  <script src="javascripts/extern/jquery-ui.min.js"></script>
+  <script src="javascripts/extern/three.min.js"></script>
+  <script src="javascripts/extern/blob.js"></script>
+  <script src="javascripts/extern/canvas-toBlob.js"></script>
+  <script src="javascripts/extern/canvastotiff.min.js"></script>
+  <script src="javascripts/extern/CopyShader.js"></script>
+  <script src="javascripts/extern/filesaver.min.js"></script>
+  <script src="javascripts/extern/EffectComposer.js"></script>
+  <script src="javascripts/extern/MaskPass.js"></script>
+  <script src="javascripts/extern/OBJLoader.js"></script>
+  <script src="javascripts/extern/OrbitControls.js"></script>
+  <script src="javascripts/extern/readTGA.js"></script>
+  <script src="javascripts/extern/RenderPass.js"></script>
+  <script src="javascripts/extern/ShaderPass.js"></script>
+  <script src="javascripts/extern/TeapotBufferGeometry.js"></script>
+  <!-- ?v=… — сбрасывает кэш браузера/GitHub Pages при каждом обновлении файлов -->
+  <script src="javascripts/shader/NormalMapShader.js?v=20261006"></script>
+  <script src="javascripts/shader/NormalToHeightShader.js"></script>
+  <script src="javascripts/shader/NormalMapFromPicturesShader.js"></script>
+  <script src="javascripts/shader/AmbientOcclusionShader.js"></script>
+  <script src="javascripts/shader/DisplacementShader.js"></script>
+  <script src="javascripts/shader/SpecularShader.js"></script>
+  <script src="javascripts/shader/HorizontalBlurShader.js"></script>
+  <script src="javascripts/shader/VerticalBlurShader.js"></script>
+  <script src="javascripts/heightprep.js?v=20261006"></script>
+  <script src="javascripts/filedrop.js?v=20261006"></script>
+  <script src="javascripts/filters.js?v=20261006"></script>
+  <script src="javascripts/renderView.js?v=20261006"></script>
+  <script src="javascripts/renderNormalview.js?v=20261006"></script>
+  <script src="javascripts/normalMap.js?v=20261006"></script>
+  <script src="javascripts/displaceMap.js?v=20261006"></script>
+  <script src="javascripts/ambientOccMap.js?v=20261006"></script>
+  <script src="javascripts/specularMap.js?v=20261006"></script>
+  <script src="javascripts/diffuseMap.js?v=20261006"></script>
+  <script src="javascripts/main.js?v=20261006"></script>
+  <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+  <script crossorigin="anonymous" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // 3D-вьюпорт подгоняется под контейнер
+    window.addEventListener('resize', function(){ NMO_RenderView.resize(); });
+    // подсветка зоны перетаскивания
+    (function(){
+      var z = document.getElementById('height_map');
+      ['dragenter','dragover'].forEach(function(e){ z.addEventListener(e, function(){ z.classList.add('dragover'); }); });
+      ['dragleave','drop'].forEach(function(e){ z.addEventListener(e, function(){ z.classList.remove('dragover'); }); });
+    })();
+  </script>
+</body>
+</html>
