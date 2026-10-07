@@ -474,12 +474,171 @@ function rasterize(src, w, h) {
 // ------------------------------------------------------------------
 // Slots
 // ------------------------------------------------------------------
-function drawCover(ctx, bmp, size) {
+function drawCover(ctx, bmp, size, fit) {
     const s = Math.max(size / bmp.width, size / bmp.height);
     const dw = bmp.width * s, dh = bmp.height * s;
+    const ox = (size - dw) / 2, oy = (size - dh) / 2;
     ctx.clearRect(0, 0, size, size);
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(bmp, (size - dw) / 2, (size - dh) / 2, dw, dh);
+    ctx.drawImage(bmp, ox, oy, dw, dh);
+    if (fit) {
+        // overlay: the circle that will be treated as the matcap sphere
+        const cx = ox + fit.cx * dw, cy = oy + fit.cy * dh;
+        const r = fit.r * Math.min(bmp.width, bmp.height) * s;
+        ctx.save();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ff2d95';
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+// ------------------------------------------------------------------
+// Matcap circle fit: the sphere does not always touch the image edges.
+// Every matcap (base / layers / back) is re-cropped so that its circle
+// fills a square exactly, which is what the engine expects.
+// ------------------------------------------------------------------
+function normalizeMatcap(src, fit, size) {
+    const w = src.width, h = src.height;
+    const R = fit.r * Math.min(w, h);
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, fit.cx * w - R, fit.cy * h - R, 2 * R, 2 * R, 0, 0, size, size);
+    return c;
+}
+
+function fitOutSize(bmp, fit) {
+    const s = Math.round(2 * fit.r * Math.min(bmp.width, bmp.height));
+    return Math.max(64, Math.min(2048, s));
+}
+
+// Finds the sphere by peeling off background: first the image border colour,
+// then (if what remains is still a filled square, e.g. a screenshot frame)
+// the colour just inside it. Returns {cx, cy, r} (fractions) or null.
+function detectDisc(bmp) {
+    const k = Math.min(1, 512 / Math.max(bmp.width, bmp.height));
+    const w = Math.max(8, Math.round(bmp.width * k));
+    const h = Math.max(8, Math.round(bmp.height * k));
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+
+    const at = (x, y) => {
+        x = Math.max(0, Math.min(w - 1, x)); y = Math.max(0, Math.min(h - 1, y));
+        const i = (y * w + x) * 4;
+        return [d[i], d[i + 1], d[i + 2], d[i + 3]];
+    };
+    const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+    let box = { x0: 0, y0: 0, x1: w - 1, y1: h - 1 };
+    let found = null;
+
+    for (let iter = 0; iter < 3; iter++) {
+        const cols = [
+            at(box.x0 + 1, box.y0 + 1), at(box.x1 - 1, box.y0 + 1),
+            at(box.x0 + 1, box.y1 - 1), at(box.x1 - 1, box.y1 - 1)
+        ];
+        const alphaBg = cols.every(c => c[3] < 16);
+        let bg = [0, 0, 0, 255];
+        if (!alphaBg) {
+            if (cols.some(c => dist(c, cols[0]) > 40)) break;      // corners disagree
+            bg = cols[0];
+        }
+        const rowCnt = new Int32Array(h), colCnt = new Int32Array(w);
+        let total = 0;
+        for (let y = box.y0; y <= box.y1; y++) {
+            for (let x = box.x0; x <= box.x1; x++) {
+                const p = at(x, y);
+                const on = alphaBg ? p[3] > 16 : (p[3] > 16 && dist(p, bg) > 24);
+                if (on) { rowCnt[y]++; colCnt[x]++; total++; }
+            }
+        }
+        let x0 = -1, x1 = -1, y0 = -1, y1 = -1;
+        for (let x = 0; x < w; x++) if (colCnt[x] >= 2) { if (x0 < 0) x0 = x; x1 = x; }
+        for (let y = 0; y < h; y++) if (rowCnt[y] >= 2) { if (y0 < 0) y0 = y; y1 = y; }
+        if (x0 < 0 || y0 < 0) break;
+
+        const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+        found = { x0, y0, x1, y1, bw, bh };
+        const fill = total / (bw * bh);
+        const shrunk = (box.x1 - box.x0 + 1 - bw) > 2 || (box.y1 - box.y0 + 1 - bh) > 2;
+        if (fill > 0.92 && shrunk) { box = { x0, y0, x1, y1 }; continue; }   // still a square frame
+        break;
+    }
+    if (!found) return null;
+
+    // a filled square is not a sphere
+    let cx = (found.x0 + found.x1 + 1) / 2 / w;
+    let cy = (found.y0 + found.y1 + 1) / 2 / h;
+    let r = ((found.bw + found.bh) / 4) / Math.min(w, h);
+    if (r < 0.15 || r > 0.75) return null;
+    if (r > 0.49 && Math.abs(cx - 0.5) < 0.01 && Math.abs(cy - 0.5) < 0.01) { cx = 0.5; cy = 0.5; r = 0.5; }
+    return { cx, cy, r };
+}
+
+// Small collapsible panel: circle size + offset + auto-detect.
+function createFitPanel({ getBitmap, onChange }) {
+    const fit = { cx: 0.5, cy: 0.5, r: 0.5 };
+    const el = document.createElement('details');
+    el.className = 'fit-panel mt-2';
+    el.innerHTML = `
+        <summary>Circle fit (if the sphere doesn't touch the edges)</summary>
+        <div class="pt-2">
+            <div class="d-flex justify-content-between small text-muted"><span>Circle size</span><span><strong data-v="d">100</strong>%</span></div>
+            <input type="range" class="form-range" data-k="d" min="20" max="150" step="0.1" value="100">
+            <div class="d-flex justify-content-between small text-muted"><span>Offset X</span><span><strong data-v="x">0</strong>%</span></div>
+            <input type="range" class="form-range" data-k="x" min="-50" max="50" step="0.1" value="0">
+            <div class="d-flex justify-content-between small text-muted"><span>Offset Y</span><span><strong data-v="y">0</strong>%</span></div>
+            <input type="range" class="form-range" data-k="y" min="-50" max="50" step="0.1" value="0">
+            <div class="d-flex gap-2 mt-1">
+                <button type="button" class="btn btn-sm btn-outline-secondary flex-fill" data-act="auto">Auto-detect</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary flex-fill" data-act="reset">Reset</button>
+            </div>
+        </div>`;
+    const q = s => el.querySelector(s);
+    const inD = q('[data-k="d"]'), inX = q('[data-k="x"]'), inY = q('[data-k="y"]');
+
+    function syncUI() {
+        inD.value = fit.r * 200; inX.value = (fit.cx - 0.5) * 100; inY.value = (fit.cy - 0.5) * 100;
+        q('[data-v="d"]').textContent = (fit.r * 200).toFixed(1);
+        q('[data-v="x"]').textContent = ((fit.cx - 0.5) * 100).toFixed(1);
+        q('[data-v="y"]').textContent = ((fit.cy - 0.5) * 100).toFixed(1);
+    }
+    function readUI() {
+        fit.r = parseFloat(inD.value) / 200;
+        fit.cx = 0.5 + parseFloat(inX.value) / 100;
+        fit.cy = 0.5 + parseFloat(inY.value) / 100;
+        syncUI();
+    }
+    [inD, inX, inY].forEach(inp => {
+        inp.addEventListener('input', () => { readUI(); onChange(true); });
+        inp.addEventListener('change', () => { readUI(); onChange(false); });
+    });
+    q('[data-act="auto"]').addEventListener('click', () => {
+        const bmp = getBitmap();
+        if (!bmp) return;
+        const r = detectDisc(bmp) || { cx: 0.5, cy: 0.5, r: 0.5 };
+        Object.assign(fit, r); syncUI(); onChange(false);
+    });
+    q('[data-act="reset"]').addEventListener('click', () => {
+        Object.assign(fit, { cx: 0.5, cy: 0.5, r: 0.5 }); syncUI(); onChange(false);
+    });
+
+    return {
+        el, fit,
+        // silently fit a freshly loaded image (caller triggers the render)
+        autoFit(bmp) {
+            Object.assign(fit, detectDisc(bmp) || { cx: 0.5, cy: 0.5, r: 0.5 });
+            syncUI();
+        }
+    };
 }
 
 function createSlot({ caption = '', large = false, clearable = false, onFile, onClear }) {
@@ -501,8 +660,8 @@ function createSlot({ caption = '', large = false, clearable = false, onFile, on
     const api = {
         el: wrap,
         open: () => input.click(),
-        setPreview(bmp) {
-            drawCover(ctx, bmp, THUMB_PX);
+        setPreview(bmp, fit) {
+            drawCover(ctx, bmp, THUMB_PX, fit);
             slotEl.classList.add('filled');
         },
         clear() {
@@ -553,8 +712,15 @@ function createSlot({ caption = '', large = false, clearable = false, onFile, on
 // Base matcap
 // ------------------------------------------------------------------
 let baseSeq = 0;
+let baseBmp = null;
 const baseSlot = createSlot({ large: true, onFile: loadBase });
 baseSlotHost.appendChild(baseSlot.el);
+
+const baseFit = createFitPanel({
+    getBitmap: () => baseBmp,
+    onChange: draft => applyBase(draft)
+});
+document.getElementById('baseFitHost').appendChild(baseFit.el);
 
 async function loadBase(file) {
     const seq = ++baseSeq;
@@ -562,23 +728,33 @@ async function loadBase(file) {
     if (!bmp) return;
     if (seq !== baseSeq) { closeBmp(bmp); return; }
 
-    const w = bmp.width, h = bmp.height;
-    const px = rasterize(bmp, w, h);
-    srcW = w; srcH = h;
-    baseReady = true;
-    engine.send({ type: 'setBase', data: px, w, h }, [px.buffer]);
-
-    baseSlot.setPreview(bmp);
-    closeBmp(bmp);
+    closeBmp(baseBmp);
+    baseBmp = bmp;
+    baseFit.autoFit(bmp);
 
     baseName.textContent = file.name;
-    baseDims.textContent = `${w} × ${h}`;
     baseInfo.hidden = false;
+    applyBase(false);
+}
+
+// (Re)crop the base so its circle fills the square, push it to the engine.
+function applyBase(draft) {
+    if (!baseBmp) return;
+    const fit = baseFit.fit;
+    const size = fitOutSize(baseBmp, fit);
+    const px = rasterize(normalizeMatcap(baseBmp, fit, size), size, size);
+    srcW = size; srcH = size;
+    baseReady = true;
+    engine.send({ type: 'setBase', data: px, w: size, h: size }, [px.buffer]);
+
+    baseSlot.setPreview(baseBmp, fit);
+    baseDims.textContent = `${baseBmp.width} × ${baseBmp.height}  →  sphere ${size} px`;
 
     layers.forEach(l => rebuildCache(l));
 
     generateBtn.disabled = false;
-    triggerRender(false);
+        const _ap = document.getElementById('dlAnimPack'); if (_ap) _ap.disabled = false;
+    triggerRender(draft);
 }
 
 // ------------------------------------------------------------------
@@ -595,16 +771,29 @@ if (backMatcapSlotHost) {
     backMatcapSlotHost.appendChild(backMatcapSlot.el);
 }
 
+const backFit = createFitPanel({
+    getBitmap: () => backBmp,
+    onChange: draft => applyBack(draft)
+});
+const backFitHost = document.getElementById('backFitHost');
+if (backFitHost) backFitHost.appendChild(backFit.el);
+
 async function loadBackMatcap(file) {
     const bmp = await decodeImage(file);
     if (!bmp) return;
     closeBmp(backBmp);
     backBmp = bmp;
-    const w = bmp.width, h = bmp.height;
-    const px = rasterize(bmp, w, h);
-    engine.send({ type: 'setBack', data: px, w, h }, [px.buffer]);
-    backMatcapSlot.setPreview(bmp);
-    triggerRender(false);
+    backFit.autoFit(bmp);
+    applyBack(false);
+}
+
+function applyBack(draft) {
+    if (!backBmp) return;
+    const size = fitOutSize(backBmp, backFit.fit);
+    const px = rasterize(normalizeMatcap(backBmp, backFit.fit, size), size, size);
+    engine.send({ type: 'setBack', data: px, w: size, h: size }, [px.buffer]);
+    backMatcapSlot.setPreview(backBmp, backFit.fit);
+    triggerRender(draft);
 }
 
 function clearBackMatcap() {
@@ -695,7 +884,8 @@ let nextLayerId = 1;
 // Rasterize the layer's matcap at base resolution and hand it to the engine.
 function rebuildCache(layer) {
     if (layer.matcap && baseReady) {
-        const px = rasterize(layer.matcap, srcW, srcH);
+        // crop to the layer's own circle, scaled to the base sphere size
+        const px = rasterize(normalizeMatcap(layer.matcap, layer.fitPanel.fit, srcW), srcW, srcH);
         layer.hasPx = true;
         engine.send({ type: 'setLayer', id: layer.id, data: px }, [px.buffer]);
     } else {
@@ -715,7 +905,8 @@ async function setLayerImage(layer, slot, file) {
     if (layer.removed || seq !== layer.seq) { closeBmp(bmp); return; }
     closeBmp(layer.matcap);
     layer.matcap = bmp;
-    slot.setPreview(bmp);
+    layer.fitPanel.autoFit(bmp);
+    slot.setPreview(bmp, layer.fitPanel.fit);
     rebuildCache(layer);
     layersChanged();
 }
@@ -780,6 +971,17 @@ function createLayerCard(layer) {
         onClear: () => clearLayerImage(layer)
     });
     card.querySelector('.layer-slot-host').appendChild(matcapSlot.el);
+
+    layer.fitPanel = createFitPanel({
+        getBitmap: () => layer.matcap,
+        onChange: draft => {
+            if (!layer.matcap) return;
+            matcapSlot.setPreview(layer.matcap, layer.fitPanel.fit);
+            rebuildCache(layer);
+            triggerRender(draft);
+        }
+    });
+    card.appendChild(layer.fitPanel.el);
 
     const select = card.querySelector('.blend-select');
     select.value = layer.blendMode || 'normal';
@@ -1046,7 +1248,7 @@ function requestRender(size, final) {
 
 // isDraft: quick low-res preview now, full-res result once input settles.
 function triggerRender(isDraft = false) {
-    if (!baseReady) return;
+    if (!baseReady || animBusy) return;
     clearTimeout(renderTimer);
     if (isDraft) {
         requestRender(Math.min(DRAFT_SIZE, getFaceSize()), false);
@@ -1056,9 +1258,20 @@ function triggerRender(isDraft = false) {
     }
 }
 
+const framePending = new Map();   // seq -> { resolve, reject } for animated-pack renders
+let animBusy = false;
+
 function handleEngineMessage(m) {
     if (m.type === 'error') {
         console.error('Render error:', m.message);
+        for (const h of framePending.values()) h.reject(new Error(m.message));
+        framePending.clear();
+        return;
+    }
+    if (m.type === 'faces' && framePending.has(m.seq)) {
+        const h = framePending.get(m.seq);
+        framePending.delete(m.seq);
+        h.resolve(m);
         return;
     }
     if (m.type !== 'faces' || m.seq < shownSeq) return;
@@ -1066,15 +1279,45 @@ function handleEngineMessage(m) {
     if (m.final) {
         generatedFaces = m.faces;
         generatedSize = m.size;
+        // 7th VTF face (sphere map slot) = the original circle-fitted matcap
+        if (baseBmp) {
+            const cv = normalizeMatcap(baseBmp, baseFit.fit, m.size);
+            generatedFaces.sphere = cv.getContext('2d').getImageData(0, 0, m.size, m.size).data;
+        }
     }
     renderPreview(m.faces, m.size);
 }
 
+function canvasPngBytes(canvas) {
+    const bin = atob(canvas.toDataURL('image/png').split(',')[1]);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+}
 function renderPreview(faces, size) {
     const holder = document.getElementById('facesOutput');
     resultArea.style.display = 'block';
     const placeholder = document.getElementById('mainPlaceholder');
     if (placeholder) placeholder.style.display = 'none';
+
+    // 7th image: the original (circle-fitted) base matcap, shown next to the faces
+    if (baseBmp) {
+        let mc = holder.querySelector('.face-cell[data-face="matcap"] canvas');
+        if (!mc) {
+            const cell = document.createElement('div');
+            cell.className = 'face-cell';
+            cell.dataset.face = 'matcap';
+            mc = document.createElement('canvas');
+            mc.draggable = false;
+            const label = document.createElement('span');
+            label.textContent = 'matcap';
+            cell.appendChild(mc);
+            cell.appendChild(label);
+            holder.appendChild(cell);
+        }
+        mc.width = mc.height = size;
+        mc.getContext('2d').drawImage(normalizeMatcap(baseBmp, baseFit.fit, size), 0, 0);
+    }
 
     for (const face of FACES) {
         let cell = holder.querySelector(`.face-cell[data-face="${face}"]`);
@@ -1285,6 +1528,7 @@ function buildMipChain(faces, size, minSize) {
         const nextSize = curSize / 2;
         const nextFaces = {};
         for (const face of FACES) nextFaces[face] = downsampleFace(curFaces[face], curSize);
+        if (curFaces.sphere) nextFaces.sphere = downsampleFace(curFaces.sphere, curSize);
         chain.push({ size: nextSize, faces: nextFaces });
         curSize = nextSize;
         curFaces = nextFaces;
@@ -1345,7 +1589,7 @@ function buildVTFGeneric(faces, size, flipRows, format, minSize) {
     for (let i = mipChain.length - 1; i >= 0; i--) {
         const level = mipChain[i];
         for (const face of FACES) writeFace(level.faces[face], level.size);
-        writeFace(level.faces[FACES[0]], level.size);
+        writeFace(level.faces.sphere || level.faces[FACES[0]], level.size);   // 7th face: matcap
     }
 
     return new Uint8Array(buf);
@@ -1379,6 +1623,7 @@ function shrinkFacesForHDR(faces, size, divisor) {
         outFaces[face] = r.faces;
         outSize = r.size;
     }
+    if (faces.sphere) outFaces.sphere = downsampleFaceN(faces.sphere, size, times).faces;
     return { faces: outFaces, size: outSize };
 }
 
@@ -1540,7 +1785,172 @@ document.getElementById('dlPngZip').addEventListener('click', () => {
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
         files.push({ name: `matcap_${face}.png`, data: bytes });
     }
+    const mcCanvas = document.querySelector('.face-cell[data-face="matcap"] canvas');
+    if (mcCanvas) files.push({ name: 'matcap_original.png', data: canvasPngBytes(mcCanvas) });
     const zip = buildZip(files);
     const matPath = getMatPath();
     download(zip, matPath.split('/').pop() + '_faces.zip', 'application/zip');
 });
+
+// ------------------------------------------------------------------
+// TEST: animated yaw cubemap pack (frames of one VTF + Lua proxy)
+// ------------------------------------------------------------------
+function buildVTFAnimated(frameFaces, size, flipRows, format) {
+    const minSize = format === 'DXT1' ? 4 : 1;
+    const frameCount = frameFaces.length;
+    const chains = frameFaces.map(f => buildMipChain(f, size, minSize));
+    const mipCount = chains[0].length;
+
+    const headerSize = 64;
+    let bodySize = 0;
+    for (const level of chains[0]) bodySize += faceByteSize(level.size, format) * 7 * frameCount;
+    const buf = new ArrayBuffer(headerSize + bodySize);
+    const dv = new DataView(buf);
+    let o = 0;
+    const wU8 = v => { dv.setUint8(o, v); o += 1; };
+    const wU16 = v => { dv.setUint16(o, v, true); o += 2; };
+    const wU32 = v => { dv.setUint32(o, v, true); o += 4; };
+    const wF32 = v => { dv.setFloat32(o, v, true); o += 4; };
+
+    // Same 64-byte header as buildVTFGeneric, but with frame count = N
+    wU8(0x56); wU8(0x54); wU8(0x46); wU8(0x00);
+    wU32(7); wU32(1);
+    wU32(headerSize);
+    wU16(size); wU16(size);
+    wU32(0x00004000 | 0x00000200);      // ENVMAP | NOLOD
+    wU16(frameCount); wU16(0);
+    wU32(0);
+    wF32(0.5); wF32(0.5); wF32(0.5);
+    wU32(0);
+    wF32(1.0);
+    wU32(VTF_FORMATS[format]);
+    wU8(mipCount);
+    dv.setInt32(o, -1, true); o += 4;
+    wU8(0); wU8(0);
+    wU8(0);
+
+    const writeFace = (rawRgba, faceSize) => {
+        const src = flipRows ? flipFaceRows(rawRgba, faceSize) : rawRgba;
+        const packed = packFace(src, faceSize, format);
+        const faceBytes = faceByteSize(faceSize, format);
+        new Uint8Array(buf, o, faceBytes).set(packed);
+        o += faceBytes;
+    };
+
+    // VTF data order: mip (smallest first) -> frame -> face
+    for (let mip = mipCount - 1; mip >= 0; mip--) {
+        for (let fr = 0; fr < frameCount; fr++) {
+            const level = chains[fr][mip];
+            for (const face of FACES) writeFace(level.faces[face], level.size);
+            writeFace(level.faces.sphere || level.faces[FACES[0]], level.size);
+        }
+    }
+    return new Uint8Array(buf);
+}
+
+function renderFrameAsync(size, p) {
+    return new Promise((resolve, reject) => {
+        const seq = ++renderSeq;
+        framePending.set(seq, { resolve, reject });
+        engine.send({ type: 'render', seq, size, final: true, p });
+        setTimeout(() => {
+            if (framePending.delete(seq)) reject(new Error('Frame render timed out'));
+        }, 60000);
+    });
+}
+
+function animLuaSource(frames) {
+    return `-- lua/matproxy/envcam.lua  (client side)
+-- Picks the $envmapframe of an animated cubemap from the camera yaw,
+-- so the reflection appears to follow the view.
+local FRAMES = ${frames}
+
+matproxy.Add({
+    name = "EnvCamYaw",
+    init = function(self, mat, values) end,
+    bind = function(self, mat, ent)
+        local vs = render.GetViewSetup()
+        local yaw = vs and vs.angles and vs.angles.y or 0
+        local idx = math.floor((yaw % 360) / 360 * FRAMES + 0.5) % FRAMES
+        mat:SetInt("$envmapframe", idx)
+    end
+})
+`;
+}
+
+function animVmtSnippet(envPath) {
+    return `// Add to your VMT (keep your other parameters and proxies):
+"$envmap" "${envPath}"
+"$envmapframe" 0
+
+Proxies
+{
+    EnvCamYaw { }
+}
+`;
+}
+
+(function setupAnimPack() {
+    const btn = document.getElementById('dlAnimPack');
+    const framesInput = document.getElementById('animFrames');
+    const reverse = document.getElementById('animReverse');
+    const status = document.getElementById('animStatus');
+    const stepLabel = document.getElementById('animStep');
+    if (!btn || !framesInput) return;
+
+    const readFrames = () => Math.max(2, Math.min(72, parseInt(framesInput.value, 10) || 24));
+    const updateStep = () => { stepLabel.textContent = (360 / readFrames()).toFixed(1).replace(/\.0$/, '') + '°/frame'; };
+    framesInput.addEventListener('input', updateStep);
+    updateStep();
+    if (baseReady) btn.disabled = false;
+
+    btn.addEventListener('click', async () => {
+        if (!baseReady || animBusy) return;
+        const N = readFrames();
+        const size = Math.min(getFaceSize(), 256);
+        const format = getPixelFormat();
+        const flip = getFlipRows();
+        const dir = reverse.checked ? -1 : 1;
+
+        animBusy = true;
+        btn.disabled = true;
+        clearTimeout(renderTimer);
+        try {
+            const basePars = collectParams();
+            let sphere = null;
+            if (baseBmp) {
+                const cv = normalizeMatcap(baseBmp, baseFit.fit, size);
+                sphere = cv.getContext('2d').getImageData(0, 0, size, size).data;
+            }
+            const frames = [];
+            for (let i = 0; i < N; i++) {
+                status.textContent = `Rendering frame ${i + 1} / ${N}…`;
+                const p = Object.assign({}, basePars, { ry: basePars.ry + dir * i * 2 * Math.PI / N });
+                const res = await renderFrameAsync(size, p);
+                if (sphere) res.faces.sphere = sphere;
+                frames.push(res.faces);
+            }
+            status.textContent = 'Packing VTF…';
+            await new Promise(r => setTimeout(r, 0));
+            const vtf = buildVTFAnimated(frames, size, flip, format);
+
+            const matPath = getMatPath();
+            const last = matPath.split('/').pop();
+            const vtfName = last + '_envanim.vtf';
+            const files = [
+                { name: vtfName, data: vtf },
+                { name: 'lua/matproxy/envcam.lua', data: new TextEncoder().encode(animLuaSource(N)) },
+                { name: 'vmt_snippet.txt', data: new TextEncoder().encode(animVmtSnippet(matPath + '_envanim')) }
+            ];
+            download(buildZip(files), last + '_envanim_pack.zip', 'application/zip');
+            status.textContent = `Done: ${N} frames, ${size}px, ${(vtf.length / 1048576).toFixed(2)} MB`;
+        } catch (err) {
+            console.error(err);
+            status.textContent = 'Failed: ' + (err && err.message ? err.message : err);
+        } finally {
+            animBusy = false;
+            btn.disabled = false;
+            triggerRender(false);   // restore the normal preview
+        }
+    });
+})();

@@ -4,7 +4,7 @@ var NMO_RenderView = new function(){
 	this.renderer = new THREE.WebGLRenderer({ alpha: true,  antialias: true });
 	this.displacement_map, this.diffuse_map, this.normal_map, this.specular_map, this.ao_map;
 	this.material;
-	this.rotation_enabled = true;
+	this.rotation_enabled = false;   // автовращение убрано
 	this.render_model;
 	this.customModel;
 	this.textureCube;
@@ -16,10 +16,6 @@ var NMO_RenderView = new function(){
         });
 		this.renderer.render(this.scene, this.camera);
 		
-		if(this.rotation_enabled){
-			this.render_model.rotation.x += 0.0015;
-			this.render_model.rotation.y += 0.0015;
-		}
 		//console.log("rendering");
 	};
 
@@ -31,6 +27,71 @@ var NMO_RenderView = new function(){
 		this.renderer.setSize( w, h );
 		this.camera.aspect = w / h;
 		this.camera.updateProjectionMatrix();
+	};
+
+	// Свободное вращение модели: ЛКМ + движение. Во время перетаскивания включается pointer lock,
+	// поэтому курсор не упирается в край окна и можно крутить сколько угодно.
+	this.initTrackball = function(){
+		var self = this, el = this.renderer.domElement;
+		var pointers = {}, count = 0, lastX = 0, lastY = 0, dragging = false, SPEED = 0.005;
+		var AX = new THREE.Vector3(1, 0, 0), AY = new THREE.Vector3(0, 1, 0);
+		el.style.touchAction = 'none';
+		el.style.cursor = 'grab';
+
+		function rotate(dx, dy){
+			var m = self.render_model;
+			if (!m) return;
+			var qy = new THREE.Quaternion().setFromAxisAngle(AY, dx * SPEED);
+			var qx = new THREE.Quaternion().setFromAxisAngle(AX, dy * SPEED);
+			m.quaternion.multiplyQuaternions(qx, m.quaternion);
+			m.quaternion.multiplyQuaternions(qy, m.quaternion);
+			m.quaternion.normalize();
+		}
+		function end(e){
+			if (pointers[e.pointerId]){ delete pointers[e.pointerId]; count--; }
+			if (count <= 0){
+				count = 0; dragging = false; el.style.cursor = 'grab';
+				if (document.pointerLockElement === el) document.exitPointerLock();
+			}
+		}
+		el.addEventListener('pointerdown', function(e){
+			if (e.pointerType === 'mouse' && e.button !== 0) return;       // ПКМ — сдвиг, колесо — зум (OrbitControls)
+			pointers[e.pointerId] = true; count++;
+			if (count > 1){ dragging = false; return; }                      // два пальца — зум/сдвиг, не вращение
+			dragging = true; lastX = e.clientX; lastY = e.clientY;
+			el.style.cursor = 'grabbing';
+			try { el.setPointerCapture(e.pointerId); } catch (err) {}
+			if (e.pointerType === 'mouse' && el.requestPointerLock){
+				try { var p = el.requestPointerLock(); if (p && p.catch) p.catch(function(){}); } catch (err) {}
+			}
+		});
+		el.addEventListener('pointermove', function(e){
+			if (!dragging) return;
+			if (document.pointerLockElement === el) rotate(e.movementX, e.movementY);
+			else rotate(e.clientX - lastX, e.clientY - lastY);
+			lastX = e.clientX; lastY = e.clientY;
+		});
+		el.addEventListener('pointerup', end);
+		el.addEventListener('pointercancel', end);
+		el.addEventListener('dblclick', function(){ self.resetView(); });
+	};
+
+	// Полный сброс сцены: поворот, позиция модели, камера, сдвиг и зум
+	this.resetView = function(){
+		if (this.render_model){
+			this.render_model.quaternion.set(0, 0, 0, 1);
+			this.render_model.position.set(0, 0, 0);
+			this.render_model.scale.set(1, 1, 1);
+		}
+		this.camera.up.set(0, 1, 0);
+		this.camera.position.set(0, 0, 29);
+		this.camera.zoom = 1;
+		this.camera.updateProjectionMatrix();
+		if (this.controls){
+			this.controls.target.set(0, 0, 0);
+			this.controls.update();
+		}
+		this.camera.lookAt(new THREE.Vector3(0, 0, 0));
 	};
 
 	this.initRenderer = function(){
@@ -49,7 +110,10 @@ var NMO_RenderView = new function(){
 	        z: 0
 	    });
 		
-		var controls = new THREE.OrbitControls( this.camera, this.renderer.domElement );
+		// OrbitControls оставляем для зума (колесо) и сдвига (ПКМ); вращение делаем сами — без ограничений
+		this.controls = new THREE.OrbitControls( this.camera, this.renderer.domElement );
+		this.controls.noRotate = true;
+		this.initTrackball();
 		
 		
 		var hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 0.6 );
@@ -197,7 +261,7 @@ var NMO_RenderView = new function(){
 		//this.material.uniforms.ambientLightColor.value = new THREE.Color(0x777777);
 
 
-		this.setModel("Cube");
+		this.setModel("Plane");
 
 		//this.scene.background = textureCube;
 		
@@ -246,18 +310,6 @@ var NMO_RenderView = new function(){
 			var geometry = new THREE.PlaneGeometry(12, 12, 128, 128);
 			geometry.faceVertexUvs[ 1 ] = geometry.faceVertexUvs[ 0 ];
 			//geometry.computeTangents();
-			this.rotation_enabled = 0;
-			this.render_model.rotation.x = 0;
-			this.render_model.rotation.y = 0;
-			this.camera.position.x = 0;
-			this.camera.position.y = 0;
-			this.camera.position.z = 29;
-			this.camera.lookAt({
-	        	x: 0,
-	        	y: 0,
-		        z: 0
-	    	});
-			document.getElementById('input_rot').checked = false;
 			this.render_model = new THREE.Mesh( new THREE.BufferGeometry().fromGeometry( geometry), this.material);
 			this.render_model.castShadow = true;
 			this.render_model.receiveShadow = true;
@@ -286,7 +338,7 @@ var NMO_RenderView = new function(){
 			this.render_model.receiveShadow = true;
 			this.scene.add( this.render_model );
 		}
-		//this.render_model.geometry.faceVertexUvs[ 1 ] = this.render_model.geometry.faceVertexUvs[ 0 ];
+		this.resetView();
 	};
 
 				
@@ -295,10 +347,6 @@ var NMO_RenderView = new function(){
 		this.render_model.material.uniforms[ "displacementScale" ].value = scale * 5;
 		this.render_model.material.uniforms[ "displacementBias" ].value = scale * 5 * - bias;
 	}
-
-	this.toggleRotation = function(){
-		this.rotation_enabled = !this.rotation_enabled;
-	};
 
 	this.setDisplacement = function(displacement){
 		if (!displacement || this.render_model.material.defines["USE_DISPLACEMENTMAP"] == ""){

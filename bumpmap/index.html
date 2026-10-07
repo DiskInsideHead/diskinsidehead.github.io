@@ -40,6 +40,18 @@
     #render_view canvas { display: block; }
     [hidden] { display: none !important; }
 
+    /* Вкладки карт: все панели лежат в одной ячейке сетки -> высота = самая высокая, интерфейс не прыгает */
+    .stack { display: grid; }
+    .stack > * { grid-area: 1 / 1; min-width: 0; }
+    .stack > .tex-off { visibility: hidden; pointer-events: none; }
+    .app-main { position: relative; }
+    .view-reset {
+      position: absolute; top: 34px; right: 38px; z-index: 5;
+      background: rgba(255,255,255,.9); border: 1px solid #ced4da; border-radius: 6px;
+      padding: 4px 10px; font-size: .8rem; cursor: pointer;
+    }
+    .view-reset:hover { border-color: #286090; color: #286090; }
+
     /* ---------- Загрузка высоты ---------- */
     .base-row { display: flex; align-items: center; gap: 12px; }
     #height_map {
@@ -152,8 +164,26 @@
 
       <!-- Настройки выбранной карты -->
       <div class="settings-area p-3 border rounded bg-light">
-        <h3>Texture settings</h3>
-        <div class="column_top" id="normal_settings" style="width: 100%;">
+        <h3>Texture</h3>
+        <div class="btn-group w-100">
+            <button class="btn btn-outline-primary tab_button" id="tab_btn_normal" onclick="NMO_Main.activate_texture('normal');" disabled>Normal</button> <button class="btn btn-outline-primary tab_button" id="tab_btn_displace" onclick="NMO_Main.activate_texture('displace');">Displacement</button> <button class="btn btn-outline-primary tab_button" id="tab_btn_ao" onclick="NMO_Main.activate_texture('ao');">AmbientOcc</button> <button class="btn btn-outline-primary tab_button" id="tab_btn_specular" onclick="NMO_Main.activate_texture('specular');">Specular</button>
+          </div>
+        <div class="stack mt-3">
+          <div class="view" id="normal_map">
+            <canvas class="preview_img" id="normal_img"></canvas>
+          </div>
+          <div class="view tex-off" id="displacement_map">
+            <canvas class="preview_img" id="displace_img"></canvas>
+          </div>
+          <div class="view tex-off" id="ao_map">
+            <canvas class="preview_img" id="ao_img"></canvas>
+          </div>
+          <div class="view tex-off" id="specular_map">
+            <canvas class="preview_img" id="specular_img"></canvas>
+          </div>
+        </div>
+        <div class="stack mt-3">
+          <div class="column_top" id="normal_settings" style="width: 100%;">
           <div class="input-group mb-2">
             <div class="input-group-text" style="width: 40%;">
               Strength
@@ -225,7 +255,7 @@
           </div>
         </div>
         
-        <div class="column_top" id="displacement_settings" style="display: none; width: 100%;">
+        <div id="displacement_settings" class="column_top tex-off" style="width: 100%;">
           <div class="input-group mb-2">
             <div class="input-group-text" style="width: 40%;">
               Contrast
@@ -252,7 +282,7 @@
           </div>
         </div>
         
-        <div class="column_top" id="ao_settings" style="display: none; width: 100%;">
+        <div id="ao_settings" class="column_top tex-off" style="width: 100%;">
           <div class="input-group mb-2">
             <div class="input-group-text" style="width: 40%;">
               Strength
@@ -295,7 +325,7 @@
           </div>
         </div>
         
-        <div class="column_top" id="specular_settings" style="display: none; width: 100%;">
+        <div id="specular_settings" class="column_top tex-off" style="width: 100%;">
           <div class="input-group mb-2">
             <div class="input-group-text" style="width: 40%;">
               Strength
@@ -339,31 +369,7 @@
             </div>
           </div>
         </div>
-        
-      </div>
-
-      <div class="settings-area p-3 border rounded bg-light">
-        <h3>Preview</h3>
-        <div class="texture_container">
-          <div class="mb-3"></div>
-          <div class="btn-group">
-            <button class="btn btn-outline-primary tab_button" id="tab_btn_normal" onclick="NMO_Main.activate_texture('normal');" disabled>Normal</button> <button class="btn btn-outline-primary tab_button" id="tab_btn_displace" onclick="NMO_Main.activate_texture('displace');">Displacement</button> <button class="btn btn-outline-primary tab_button" id="tab_btn_ao" onclick="NMO_Main.activate_texture('ao');">AmbientOcc</button> <button class="btn btn-outline-primary tab_button" id="tab_btn_specular" onclick="NMO_Main.activate_texture('specular');">Specular</button>
-          </div>
-          <div class="mb-3"></div>
-          <div class="view" id="normal_map">
-            <canvas class="preview_img" id="normal_img"></canvas>
-          </div>
-          <div class="view" id="displacement_map" style="display: none;">
-            <canvas class="preview_img" id="displace_img"></canvas>
-          </div>
-          <div class="view" id="ao_map" style="display: none;">
-            <canvas class="preview_img" id="ao_img"></canvas>
-          </div>
-          <div class="view" id="specular_map" style="display: none;">
-            <canvas class="preview_img" id="specular_img"></canvas>
-          </div>
         </div>
-        
       </div>
 
       <!-- 3D preview -->
@@ -374,10 +380,10 @@
           <div class="input-group-text" style="width: 50%">
             Model
           </div><select class="form-select" id="model" onchange="NMO_RenderView.setModel(document.getElementById('model').value)">
-            <option selected>
+            <option>
               Cube
             </option>
-            <option>
+            <option selected>
               Plane
             </option>
             <option>
@@ -394,13 +400,8 @@
             </option>
           </select> <input id="select_model_file" type="file" accept=".obj" style="position:absolute;visibility:hidden;"> <input class="btn btn-outline-secondary" type="button" id="browseModelButton" value="Load .obj" onclick="select_model_file.click();">
         </div>
-        <div class="input-group mb-2 mr-sm-2">
-          <div class="input-group-text" style="width: 100%">
-            <div class="form-check">
-              <input class="form-check-input" id="input_rot" type="checkbox" value="rotation" onclick="NMO_RenderView.toggleRotation()" checked> <label class="form-check-label" for="input_rot">Rotation</label>
-            </div>
-          </div>
-        </div>
+        <button type="button" class="btn btn-outline-primary btn-sm w-100 mb-2" onclick="NMO_RenderView.resetView()">Reset scene</button>
+        <div class="base-hint mb-2" style="font-size:.75rem">ЛКМ — вращение без ограничений · ПКМ — сдвиг · колесо — зум · двойной клик — сброс</div>
         <div class="input-group mb-2 mr-sm-2">
           <div class="input-group-text" style="width: 50%">
             <div class="form-check">
@@ -484,6 +485,7 @@
 
     <main class="app-main">
       <div id="render_view"></div>
+      <button type="button" class="view-reset" onclick="NMO_RenderView.resetView()">⟲ Reset</button>
     </main>
   </div>
 

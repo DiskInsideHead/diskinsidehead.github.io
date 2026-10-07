@@ -53,96 +53,24 @@ var NMO_Main = new function(){
 		}
 	}
 
+	// Вкладки не меняют вёрстку: неактивные панели остаются в потоке (visibility), высота блока постоянна
 	this.activate_texture = function(type){
-		if (type == "normal"){
-			document.getElementById('tab_btn_normal').disabled = true;
-			document.getElementById('tab_btn_displace').disabled = false;
-			document.getElementById('tab_btn_ao').disabled = false;
-			document.getElementById('tab_btn_specular').disabled = false;
-			//console.log("normal!");
-			document.getElementById('normal_map').style.cssText = "";
-			document.getElementById('normal_settings').style.cssText = "";
-			
-			document.getElementById('displacement_map').style.cssText = "display: none;";
-			document.getElementById('displacement_settings').style.cssText = "display: none;";
-			
-			document.getElementById('ao_map').style.cssText = "display: none;";
-			document.getElementById('ao_settings').style.cssText = "display: none;";
-
-			document.getElementById('specular_map').style.cssText = "display: none;";
-			document.getElementById('specular_settings').style.cssText = "display: none;";
-
-			document.getElementById('file_name').placeholder = "NormalMap";
-			this.current_texture = this.TextureEnum.NORMAL;
+		var T = {
+			normal:   { v: 'normal_map',       s: 'normal_settings',       b: 'tab_btn_normal',   f: 'NormalMap',           e: this.TextureEnum.NORMAL },
+			displace: { v: 'displacement_map', s: 'displacement_settings', b: 'tab_btn_displace', f: 'DisplacementMap',     e: this.TextureEnum.DISPLACEMENT },
+			ao:       { v: 'ao_map',           s: 'ao_settings',           b: 'tab_btn_ao',       f: 'AmbientOcclusionMap', e: this.TextureEnum.AMBIENT },
+			specular: { v: 'specular_map',     s: 'specular_settings',     b: 'tab_btn_specular', f: 'SpecularMap',         e: this.TextureEnum.SPECULAR }
+		};
+		if (!T[type]) return;
+		for (var k in T){
+			var on = (k === type);
+			document.getElementById(T[k].v).classList.toggle('tex-off', !on);
+			document.getElementById(T[k].s).classList.toggle('tex-off', !on);
+			document.getElementById(T[k].b).disabled = on;
 		}
-		
-		else if (type == "displace"){
-			document.getElementById('tab_btn_normal').disabled = false;
-			document.getElementById('tab_btn_displace').disabled = true;
-			document.getElementById('tab_btn_ao').disabled = false;
-			document.getElementById('tab_btn_specular').disabled = false;
-			
-			document.getElementById('normal_map').style.cssText = "display: none;";
-			document.getElementById('normal_settings').style.cssText = "display: none;";
-			
-			document.getElementById('displacement_map').style.cssText = "";
-			document.getElementById('displacement_settings').style.cssText = "";
-			
-			document.getElementById('ao_map').style.cssText = "display: none;";
-			document.getElementById('ao_settings').style.cssText = "display: none;";
-
-			document.getElementById('specular_map').style.cssText = "display: none;";
-			document.getElementById('specular_settings').style.cssText = "display: none;";
-
-			document.getElementById('file_name').placeholder = "DisplacementMap";
-			this.current_texture = this.TextureEnum.DISPLACEMENT;
-			//console.log("displace!");
-		}
-		else if (type == "ao"){
-			document.getElementById('tab_btn_normal').disabled = false;
-			document.getElementById('tab_btn_displace').disabled = false;
-			document.getElementById('tab_btn_ao').disabled = true;
-			document.getElementById('tab_btn_specular').disabled = false;
-			
-			document.getElementById('normal_map').style.cssText = "display: none;";
-			document.getElementById('normal_settings').style.cssText = "display: none;";
-			
-			document.getElementById('displacement_map').style.cssText = "display: none;";
-			document.getElementById('displacement_settings').style.cssText = "display: none;";
-			
-			document.getElementById('ao_map').style.cssText = "";
-			document.getElementById('ao_settings').style.cssText = "";
-
-			document.getElementById('specular_map').style.cssText = "display: none;";
-			document.getElementById('specular_settings').style.cssText = "display: none;";
-
-			document.getElementById('file_name').placeholder = "AmbientOcclusionMap";
-			this.current_texture = this.TextureEnum.AMBIENT;
-			//console.log("displace!");
-		}
-		else if (type == "specular"){
-			document.getElementById('tab_btn_normal').disabled = false;
-			document.getElementById('tab_btn_displace').disabled = false;
-			document.getElementById('tab_btn_ao').disabled = false;
-			document.getElementById('tab_btn_specular').disabled = true;
-			
-			document.getElementById('normal_map').style.cssText = "display: none;";
-			document.getElementById('normal_settings').style.cssText = "display: none;";
-			
-			document.getElementById('displacement_map').style.cssText = "display: none;";
-			document.getElementById('displacement_settings').style.cssText = "display: none;";
-
-			document.getElementById('ao_map').style.cssText = "display: none;";
-			document.getElementById('ao_settings').style.cssText = "display: none;";
-			
-			document.getElementById('specular_map').style.cssText = "";
-			document.getElementById('specular_settings').style.cssText = "";
-
-			document.getElementById('file_name').placeholder = "SpecularMap";
-			this.current_texture = this.TextureEnum.SPECULAR;
-			//console.log("displace!");
-		}
-	}
+		document.getElementById('file_name').placeholder = T[type].f;
+		this.current_texture = T[type].e;
+	};
 
 
 	this.setTexturePreview = function(canvas, img_id, width, height){
@@ -272,13 +200,13 @@ var NMO_Main = new function(){
 	};
 
 	this.updateCurrentTexture = function(){
-		if (this.current_texture == TextureEnum.NORMAL)
+		if (this.current_texture == this.TextureEnum.NORMAL)
 			NMO_NormalMap.createNormalMap();
-		else if (this.current_texture == TextureEnum.DISPLACEMENT)
+		else if (this.current_texture == this.TextureEnum.DISPLACEMENT)
 			NMO_DisplacementMap.createDisplacementMap();
-		else if (this.current_texture == TextureEnum.AMBIENT)
+		else if (this.current_texture == this.TextureEnum.AMBIENT)
 			NMO_AmbientOccMap.createAmbientOcclusionTexture();
-		else if (this.current_texture == TextureEnum.SPECULAR)
+		else if (this.current_texture == this.TextureEnum.SPECULAR)
 			NMO_SpecularMap.createSpecularTexture();
 	};
 
@@ -289,19 +217,9 @@ var NMO_Main = new function(){
 		NMO_Main.downloadImage("SpecularMap");
 	});
 	
-	this.download_btn.addEventListener('click', function (e) {		
-		if (document.getElementById('normal_map').style.cssText != "display: none;"){
-			NMO_Main.downloadImage("NormalMap");
-		}
-		else if (document.getElementById('displacement_map').style.cssText != "display: none;"){
-			NMO_Main.downloadImage("DisplacementMap");
-		}
-		else if (document.getElementById('ao_map').style.cssText != "display: none;"){
-			NMO_Main.downloadImage("AmbientOcclusionMap");
-		}
-		else if (document.getElementById('specular_map').style.cssText != "display: none;"){
-			NMO_Main.downloadImage("SpecularMap");
-		}		
+	this.download_btn.addEventListener('click', function (e) {
+		var names = ["NormalMap", "DisplacementMap", "AmbientOcclusionMap", "SpecularMap"];
+		NMO_Main.downloadImage(names[NMO_Main.current_texture]);
 	});
 	
 	

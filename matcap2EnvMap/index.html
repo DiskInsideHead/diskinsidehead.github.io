@@ -144,6 +144,8 @@
             .slot.filled:hover .slot-clear,
             .slot.filled:focus-within .slot-clear { display: block; }
             .slot-caption { font-size: .75rem; color: #6c757d; }
+            .fit-panel summary { cursor: pointer; font-size: .8rem; color: #495057; user-select: none; }
+            .fit-panel .form-range { margin-bottom: 2px; }
 
             .base-row { display: flex; align-items: center; gap: 12px; }
             .base-info { min-width: 0; font-size: .85rem; }
@@ -197,6 +199,7 @@
             .face-cell[data-face="px"] { grid-column: 3; grid-row: 2; }
             .face-cell[data-face="nz"] { grid-column: 4; grid-row: 2; }
             .face-cell[data-face="py"] { grid-column: 3; grid-row: 1; }
+            .face-cell[data-face="matcap"] { grid-column: 1; grid-row: 1; }
             .face-cell[data-face="ny"] { grid-column: 3; grid-row: 3; }
             #facesOutput canvas {
                 width: 100%;
@@ -285,6 +288,7 @@
                             <div class="base-dims" id="baseDims"></div>
                         </div>
                     </div>
+                    <div id="baseFitHost"></div>
                 </div>
 
                 <h3 class="section-title">Extra matcap layers</h3>
@@ -425,6 +429,7 @@
                         <div class="d-flex align-items-center gap-3 mb-2">
                             <div id="backMatcapSlotHost"></div>
                         </div>
+                        <div id="backFitHost" class="mb-2"></div>
                         <div class="d-flex justify-content-between small text-muted">
                             <label for="backMatcapScale" class="form-label mb-0">Back scale:</label>
                             <span><strong id="backMatcapScaleVal">1.00</strong>×</span>
@@ -503,6 +508,22 @@
                         </div>
                         <input type="range" class="form-range" id="matcapScale" min="0.9" max="3.0" step="0.01" value="1.0">
                     </fieldset>
+                </div>
+
+                <div class="settings-area p-3 border rounded bg-light">
+                    <h3>Test: animated yaw cubemap</h3>
+                    <p class="small text-muted mb-2">Renders N copies of the cubemap rotated around Y and packs them as frames of one VTF (for <code>$envmapframe</code> + Lua proxy). Face size is capped at 256.</p>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <label for="animFrames" class="form-label small text-muted mb-0">Frames:</label>
+                        <input type="number" class="form-control form-control-sm" id="animFrames" min="2" max="72" step="1" value="24" style="width: 80px;">
+                        <span class="small text-muted" id="animStep">15°/frame</span>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="animReverse">
+                        <label class="form-check-label small" for="animReverse">Reverse rotation direction</label>
+                    </div>
+                    <button type="button" class="btn btn-outline-primary btn-sm w-100" id="dlAnimPack" disabled>Download test pack (.zip)</button>
+                    <div class="small text-muted mt-1" id="animStatus"></div>
                 </div>
 
                 <div class="sidebar-actions">
