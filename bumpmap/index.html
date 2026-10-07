@@ -9,7 +9,7 @@
   <link href="../styles/style.css" rel="stylesheet">
   <link href="../styles/foundation-icons.css" rel="stylesheet">
   <style>
-    /* ---------- Layout: тот же каркас, что у matcap2EnvMap ---------- */
+    /* ---------- Layout (same shell as matcap2EnvMap) ---------- */
     html, body { height: 100%; overflow: hidden; }
     body { margin: 0; }
     .app-shell { display: flex; align-items: stretch; height: 100vh; }
@@ -40,7 +40,7 @@
     #render_view canvas { display: block; }
     [hidden] { display: none !important; }
 
-    /* Вкладки карт: все панели лежат в одной ячейке сетки -> высота = самая высокая, интерфейс не прыгает */
+    /* Texture tabs: all panels share one grid cell so the height stays constant */
     .stack { display: grid; }
     .stack > * { grid-area: 1 / 1; min-width: 0; }
     .stack > .tex-off { visibility: hidden; pointer-events: none; }
@@ -52,7 +52,7 @@
     }
     .view-reset:hover { border-color: #286090; color: #286090; }
 
-    /* ---------- Загрузка высоты ---------- */
+    /* ---------- Height map slot ---------- */
     .base-row { display: flex; align-items: center; gap: 12px; }
     #height_map {
       position: relative; flex: none; width: 120px; height: 120px;
@@ -66,7 +66,7 @@
     #size { border: 0; background: transparent; padding: 0; width: 100%; color: #6c757d; font-size: .85rem; outline: none; }
     #deband_status { font-size: .75rem; color: #286090; min-height: 1.1em; }
 
-    /* ---------- Контролы из оригинала, подогнанные под узкий сайдбар ---------- */
+    /* ---------- Original controls fitted to the sidebar ---------- */
     .app-sidebar .input-group-text { font-size: .85rem; }
     .app-sidebar .form-control { min-width: 0; }
     .app-sidebar .form-range { width: 100%; }
@@ -94,26 +94,25 @@
         <h2>Bump → Normal / Displacement</h2>
       </div>
 
-      <!-- Карта высот -->
+      <!-- Height map -->
       <div class="settings-area p-3 border rounded bg-light">
         <h3>Height map</h3>
         <div class="base-row">
-          <div id="height_map" title="Нажми или перетащи файл">
+          <div id="height_map" title="Click or drop a height map">
             <input id="select_file_height" type="file" accept="image/*, .tga" style="position:absolute;visibility:hidden;">
             <canvas id="height_canvas" onclick="select_file_height.click()"></canvas>
           </div>
           <div class="base-info">
-            <div class="base-hint">Нажми на превью или перетащи картинку</div>
             <input id="size" type="text" readonly>
           </div>
         </div>
         <div hidden>
           <input id="select_multiple_height_files" type="file" accept="image/*, .tga" multiple style="position:absolute;visibility:hidden;">
         </div>
-        <button type="button" class="btn btn-outline-primary btn-sm w-100 mt-3" onclick="select_multiple_height_files.click()">Пакетно: выбрать несколько и скачать всё</button>
+        <button type="button" class="btn btn-outline-primary btn-sm w-100 mt-3" onclick="select_multiple_height_files.click()">Batch export…</button>
 
-        <h3 class="mt-3">De-band (убрать ступеньки)</h3>
-        <div class="input-group mb-1">
+        <h3 class="mt-3">De-band</h3>
+        <div class="input-group mb-1" title="Removes 8-bit stair-stepping before normals are computed. 0 = off.">
           <div class="input-group-text" style="width: 30%;">Strength</div>
           <div class="input-group-text" style="width: 50%;">
             <input id="deband_slider" class="form-range" type="range" value="24" min="0" max="96" step="1"
@@ -123,11 +122,10 @@
           <input class="form-control" id="deband_nmb" type="number" step="1" min="0" max="96" style="width: 40px;" value="24"
                  onchange="document.getElementById('deband_slider').value = this.value; NMO_HeightPrep.setIterations(this.value, NMO_FileDrop.applyLoadedHeight);">
         </div>
-        <div class="base-hint" style="font-size:.75rem">Восстанавливает плавные склоны из 8-битных террас до расчёта нормалей. 0 — выключено.</div>
         <div id="deband_status"></div>
       </div>
 
-      <!-- Скрытый режим "по картинкам" (нужен коду, на странице не используется) -->
+      <!-- Hidden "pictures" mode (required by the code, not shown) -->
       <div hidden>
         <div class="view" id="pictures_map" style="display: inline-block;float: left; display:none;">
           <input id="select_file_above" type="file" accept="image/*, .tga" style="position:absolute;visibility:hidden;"> <input id="select_file_left" type="file" accept="image/*, .tga" style="position:absolute;visibility:hidden;"> <input id="select_file_right" type="file" accept="image/*, .tga" style="position:absolute;visibility:hidden;"> <input id="select_file_below" type="file" accept="image/*, .tga" style="position:absolute;visibility:hidden;">
@@ -162,7 +160,7 @@
         
       </div>
 
-      <!-- Настройки выбранной карты -->
+      <!-- Selected texture -->
       <div class="settings-area p-3 border rounded bg-light">
         <h3>Texture</h3>
         <div class="btn-group w-100">
@@ -401,7 +399,6 @@
           </select> <input id="select_model_file" type="file" accept=".obj" style="position:absolute;visibility:hidden;"> <input class="btn btn-outline-secondary" type="button" id="browseModelButton" value="Load .obj" onclick="select_model_file.click();">
         </div>
         <button type="button" class="btn btn-outline-primary btn-sm w-100 mb-2" onclick="NMO_RenderView.resetView()">Reset scene</button>
-        <div class="base-hint mb-2" style="font-size:.75rem">ЛКМ — вращение без ограничений · ПКМ — сдвиг · колесо — зум · двойной клик — сброс</div>
         <div class="input-group mb-2 mr-sm-2">
           <div class="input-group-text" style="width: 50%">
             <div class="form-check">
@@ -484,7 +481,7 @@
     </aside>
 
     <main class="app-main">
-      <div id="render_view"></div>
+      <div id="render_view" title="Drag: rotate · Right-drag: pan · Wheel: zoom · Double-click: reset"></div>
       <button type="button" class="view-reset" onclick="NMO_RenderView.resetView()">⟲ Reset</button>
     </main>
   </div>
@@ -506,7 +503,7 @@
   <script src="javascripts/extern/RenderPass.js"></script>
   <script src="javascripts/extern/ShaderPass.js"></script>
   <script src="javascripts/extern/TeapotBufferGeometry.js"></script>
-  <!-- ?v=… — сбрасывает кэш браузера/GitHub Pages при каждом обновлении файлов -->
+  <!-- ?v=… busts the browser/GitHub Pages cache on every update -->
   <script src="javascripts/shader/NormalMapShader.js?v=20261006"></script>
   <script src="javascripts/shader/NormalToHeightShader.js"></script>
   <script src="javascripts/shader/NormalMapFromPicturesShader.js"></script>
@@ -529,9 +526,9 @@
   <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
   <script crossorigin="anonymous" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    // 3D-вьюпорт подгоняется под контейнер
+    // Fit the 3D viewport to its container
     window.addEventListener('resize', function(){ NMO_RenderView.resize(); });
-    // подсветка зоны перетаскивания
+    // Drop-zone highlight
     (function(){
       var z = document.getElementById('height_map');
       ['dragenter','dragover'].forEach(function(e){ z.addEventListener(e, function(){ z.classList.add('dragover'); }); });

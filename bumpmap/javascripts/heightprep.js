@@ -184,7 +184,7 @@ var NMO_HeightPrep = new function(){
 	this._setStatus = function(p){
 		var el = typeof document !== 'undefined' ? document.getElementById('deband_status') : null;
 		if (!el) return;
-		el.textContent = p < 0 ? '' : 'Сглаживание высоты… ' + Math.round(p * 100) + '%';
+		el.textContent = p < 0 ? '' : 'De-banding… ' + Math.round(p * 100) + '%';
 	};
 
 	/* ---------------- WebGL-текстуры ---------------- */
