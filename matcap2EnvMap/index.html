@@ -86,7 +86,6 @@
                 outline: none;
             }
 
-            /* ---------- Square image slots ---------- */
             .slot-wrap {
                 display: flex;
                 flex-direction: column;
@@ -239,7 +238,6 @@
                 box-shadow: 0 0 4px rgba(0,0,0,0.5);
             }
 
-            /* ---------- No accidental drag / selection while using controls ---------- */
             .app-sidebar, .app-main {
                 -webkit-user-select: none;
                 user-select: none;
@@ -253,7 +251,6 @@
                 user-drag: none;
             }
 
-            /* ---------- Alpha sliders (checkerboard + colour ramp) ---------- */
             :root {
                 --checker: repeating-conic-gradient(#c9c9c9 0% 25%, #ffffff 0% 50%) 50% / 10px 10px;
             }
@@ -295,31 +292,58 @@
                 <div id="layersContainer"></div>
                 <button type="button" class="btn btn-outline-primary btn-sm w-100 mb-3" id="addLayerBtn">+ Add layer</button>
 
-                <label for="matPath" class="form-label mb-1">Имя файла</label>
+                <label for="matPath" class="form-label mb-1">File name</label>
                 <input class="form-control mb-3" id="matPath" type="text" value="material" placeholder="material">
 
                 <div class="settings-area p-3 border rounded bg-light">
-                    <h3>Face size</h3>
-                    <fieldset title="Size of each of the 6 cubemap faces.">
+                    <h3>Face size (LDR)</h3>
+                    <fieldset>
                         <div class="btn-group w-100" role="group">
+                            <input class="btn-check" id="size-16" name="faceSize" type="radio" value="16">
+                            <label class="btn btn-outline-primary px-1" for="size-16">16</label>
+
+                            <input class="btn-check" id="size-32" name="faceSize" type="radio" value="32">
+                            <label class="btn btn-outline-primary px-1" for="size-32">32</label>
+
                             <input class="btn-check" id="size-64" name="faceSize" type="radio" value="64">
-                            <label class="btn btn-outline-primary" for="size-64">64</label>
+                            <label class="btn btn-outline-primary px-1" for="size-64">64</label>
 
                             <input class="btn-check" id="size-128" name="faceSize" type="radio" value="128">
-                            <label class="btn btn-outline-primary" for="size-128">128</label>
+                            <label class="btn btn-outline-primary px-1" for="size-128">128</label>
 
                             <input class="btn-check" id="size-256" name="faceSize" type="radio" value="256">
-                            <label class="btn btn-outline-primary" for="size-256">256</label>
+                            <label class="btn btn-outline-primary px-1" for="size-256">256</label>
 
                             <input checked class="btn-check" id="size-512" name="faceSize" type="radio" value="512">
-                            <label class="btn btn-outline-primary" for="size-512">512</label>
-
-                            <input class="btn-check" id="size-1024" name="faceSize" type="radio" value="1024">
-                            <label class="btn btn-outline-primary" for="size-1024">1024</label>
+                            <label class="btn btn-outline-primary px-1" for="size-512">512</label>
                         </div>
                     </fieldset>
-                    <h3>Compression</h3>
-                    <fieldset title="VTF pixel compression format.">
+
+                    <h3 class="mt-2">HDR Face size</h3>
+                    <fieldset>
+                        <div class="btn-group w-100" role="group">
+                            <input class="btn-check" id="hdr-size-16" name="hdrFaceSize" type="radio" value="16">
+                            <label class="btn btn-outline-warning px-1" for="hdr-size-16">16</label>
+
+                            <input class="btn-check" id="hdr-size-32" name="hdrFaceSize" type="radio" value="32">
+                            <label class="btn btn-outline-warning px-1" for="hdr-size-32">32</label>
+
+                            <input class="btn-check" id="hdr-size-64" name="hdrFaceSize" type="radio" value="64">
+                            <label class="btn btn-outline-warning px-1" for="hdr-size-64">64</label>
+
+                            <input class="btn-check" id="hdr-size-128" name="hdrFaceSize" type="radio" value="128">
+                            <label class="btn btn-outline-warning px-1" for="hdr-size-128">128</label>
+
+                            <input checked class="btn-check" id="hdr-size-256" name="hdrFaceSize" type="radio" value="256">
+                            <label class="btn btn-outline-warning px-1" for="hdr-size-256">256</label>
+
+                            <input class="btn-check" id="hdr-size-512" name="hdrFaceSize" type="radio" value="512">
+                            <label class="btn btn-outline-warning px-1" for="hdr-size-512">512</label>
+                        </div>
+                    </fieldset>
+
+                    <h3 class="mt-2">Compression (LDR)</h3>
+                    <fieldset>
                         <div class="btn-group w-100" role="group">
                             <input checked class="btn-check" id="fmt-dxt1" name="pixelFormat" type="radio" value="DXT1">
                             <label class="btn btn-outline-primary" for="fmt-dxt1">DXT1</label>
@@ -332,7 +356,7 @@
 
                 <div class="settings-area p-3 border rounded bg-light">
                     <h3>Orientation</h3>
-                    <fieldset title="Vertical row flipping options.">
+                    <fieldset>
                         <div class="btn-group w-100" role="group">
                             <input checked class="btn-check" id="flip-none" name="flipRows" type="radio" value="false">
                             <label class="btn btn-outline-primary" for="flip-none">Normal</label>
@@ -343,7 +367,7 @@
                     </fieldset>
 
                     <h3>Back-face fill</h3>
-                    <fieldset title="Controls how the unseen back hemisphere is filled in.">
+                    <fieldset>
                         <div class="btn-group w-100 mb-3" role="group">
                             <input checked class="btn-check" id="backfill-blur" name="backFill" type="radio" value="blur">
                             <label class="btn btn-outline-primary btn-sm" for="backfill-blur">Blur</label>
@@ -359,11 +383,10 @@
                         </div>
                     </fieldset>
 
-                    <!-- Controls for Solid Color -->
                     <div id="backColorArea" class="mb-3" style="display: none;">
                         <label class="form-label small text-muted mb-1">Solid color:</label>
                         <div class="d-flex align-items-center gap-2">
-                            <input type="color" class="form-control form-control-color" id="backColorPicker" value="#1a1a1a" title="Choose color">
+                            <input type="color" class="form-control form-control-color" id="backColorPicker" value="#1a1a1a">
                             <button type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" id="pipetteBtn" title="Pick color with eyedropper">
                                 <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                                     <path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"/>
@@ -376,16 +399,15 @@
                             <label for="backColorAlpha" class="form-label mb-0">Opacity:</label>
                             <span><strong id="backColorAlphaVal">100</strong>%</span>
                         </div>
-                        <input type="range" class="form-range alpha-range" id="backColorAlpha" min="0" max="100" step="1" value="100" title="Alpha / opacity">
+                        <input type="range" class="form-range alpha-range" id="backColorAlpha" min="0" max="100" step="1" value="100">
                     </div>
 
-                    <!-- Controls for Gradient -->
                     <div id="backGradientArea" class="mb-3" style="display: none;">
                         <div class="row g-2 mb-2">
                             <div class="col-6">
                                 <label class="form-label small text-muted mb-1">Color 1 (Center):</label>
                                 <div class="d-flex align-items-center gap-2">
-                                    <input type="color" class="form-control form-control-color" id="gradColor1Picker" value="#0d6efd" title="Center color">
+                                    <input type="color" class="form-control form-control-color" id="gradColor1Picker" value="#0d6efd">
                                     <button type="button" class="btn btn-sm btn-outline-secondary p-1" id="pipetteGrad1" title="Pick center color">
                                         <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"/></svg>
                                     </button>
@@ -394,37 +416,36 @@
                                     <label for="gradColor1Alpha" class="form-label mb-0">Opacity:</label>
                                     <span><strong id="gradColor1AlphaVal">100</strong>%</span>
                                 </div>
-                                <input type="range" class="form-range alpha-range" id="gradColor1Alpha" min="0" max="100" step="1" value="100" title="Alpha / opacity">
+                                <input type="range" class="form-range alpha-range" id="gradColor1Alpha" min="0" max="100" step="1" value="100">
                             </div>
                             <div class="col-6">
                                 <label class="form-label small text-muted mb-1">Color 2 (Rim):</label>
                                 <div class="d-flex align-items-center gap-2">
-                                    <input type="color" class="form-control form-control-color" id="gradColor2Picker" value="#111827" title="Rim color">
+                                    <input type="color" class="form-control form-control-color" id="gradColor2Picker" value="#111827">
                                     <button type="button" class="btn btn-sm btn-outline-secondary p-1" id="pipetteGrad2" title="Pick rim color">
-                                        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"/></svg>
+                                        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"/></svg>
                                     </button>
                                 </div>
                                 <div class="d-flex justify-content-between small text-muted mt-1">
                                     <label for="gradColor2Alpha" class="form-label mb-0">Opacity:</label>
                                     <span><strong id="gradColor2AlphaVal">100</strong>%</span>
                                 </div>
-                                <input type="range" class="form-range alpha-range" id="gradColor2Alpha" min="0" max="100" step="1" value="100" title="Alpha / opacity">
+                                <input type="range" class="form-range alpha-range" id="gradColor2Alpha" min="0" max="100" step="1" value="100">
                             </div>
                         </div>
                         <div class="d-flex justify-content-between small text-muted">
                             <label for="gradInnerRadius" class="form-label mb-0">Inner circle size:</label>
                             <span><strong id="gradInnerRadiusVal">50</strong>%</span>
                         </div>
-                        <input type="range" class="form-range mb-2" id="gradInnerRadius" min="5" max="95" step="1" value="50" title="Размер внутреннего круга градиента">
+                        <input type="range" class="form-range mb-2" id="gradInnerRadius" min="5" max="95" step="1" value="50">
 
                         <div class="d-flex justify-content-between small text-muted">
                             <label for="gradSharpness" class="form-label mb-0">Inner circle sharpness:</label>
                             <span><strong id="gradSharpnessVal">0</strong>%</span>
                         </div>
-                        <input type="range" class="form-range" id="gradSharpness" min="0" max="100" step="1" value="0" title="Резкость границы внутреннего круга">
+                        <input type="range" class="form-range" id="gradSharpness" min="0" max="100" step="1" value="0">
                     </div>
 
-                    <!-- Controls for Second Matcap -->
                     <div id="backMatcapArea" class="mb-3" style="display: none;">
                         <div class="d-flex align-items-center gap-3 mb-2">
                             <div id="backMatcapSlotHost"></div>
@@ -437,25 +458,24 @@
                         <input type="range" class="form-range" id="backMatcapScale" min="0.5" max="3.0" step="0.01" value="1.0">
                     </div>
 
-                    <!-- Universal Coverage Radius & Edge Sharpness -->
                     <div id="backBoundaryControls" class="pt-2 border-top">
                         <div class="d-flex justify-content-between small text-muted">
                             <label for="backRadius" class="form-label mb-0">Coverage (Radius):</label>
                             <span><strong id="backRadiusVal">1.00</strong>×</span>
                         </div>
-                        <input type="range" class="form-range mb-2" id="backRadius" min="0.1" max="1.8" step="0.01" value="1.0" title="Уменьшение или увеличение области охвата задней части">
+                        <input type="range" class="form-range mb-2" id="backRadius" min="0.1" max="1.8" step="0.01" value="1.0">
 
                         <div class="d-flex justify-content-between small text-muted">
                             <label for="backEdgeSharpness" class="form-label mb-0">Edge sharpness:</label>
                             <span><strong id="backEdgeSharpnessVal">25</strong>%</span>
                         </div>
-                        <input type="range" class="form-range" id="backEdgeSharpness" min="0" max="100" step="1" value="25" title="Резкость границы стыка">
+                        <input type="range" class="form-range" id="backEdgeSharpness" min="0" max="100" step="1" value="25">
                     </div>
                 </div>
 
                 <div class="settings-area p-3 border rounded bg-light">
                     <h3>Overall softness</h3>
-                    <fieldset title="Blurs the cubemap to soften symmetry.">
+                    <fieldset>
                         <div class="d-flex justify-content-between small text-muted">
                             <label for="globalSoftness" class="form-label mb-0">Softness:</label>
                             <span><strong id="globalSoftnessVal">0</strong>%</span>
@@ -469,7 +489,7 @@
                         <h3 class="mb-0">Rotation</h3>
                         <button type="button" class="btn btn-sm btn-outline-secondary" id="resetRotation">Reset</button>
                     </div>
-                    <fieldset title="Drag the dot on the sphere to adjust Pitch and Yaw interactive.">
+                    <fieldset>
                         <div class="ball-controller-wrap" id="ballController">
                             <div class="ball-handle" id="ballHandle"></div>
                         </div>
@@ -502,7 +522,7 @@
 
                 <div class="settings-area p-3 border rounded bg-light">
                     <h3>Scale</h3>
-                    <fieldset title="Приближение центра маткапа для скрытия краев.">
+                    <fieldset>
                         <div class="d-flex justify-content-between small text-muted">
                             <span><strong id="matcapScaleVal">1.00</strong>×</span>
                         </div>
@@ -511,18 +531,50 @@
                 </div>
 
                 <div class="settings-area p-3 border rounded bg-light">
-                    <h3>Test: animated yaw cubemap</h3>
-                    <p class="small text-muted mb-2">Renders N copies of the cubemap rotated around Y and packs them as frames of one VTF (for <code>$envmapframe</code> + Lua proxy). Face size is capped at 256.</p>
-                    <div class="d-flex align-items-center gap-2 mb-2">
-                        <label for="animFrames" class="form-label small text-muted mb-0">Frames:</label>
-                        <input type="number" class="form-control form-control-sm" id="animFrames" min="2" max="72" step="1" value="24" style="width: 80px;">
-                        <span class="small text-muted" id="animStep">15°/frame</span>
+                    <h3>Animated cubemap</h3>
+
+                    <label class="form-label small text-muted mb-1">Rotation axis:</label>
+                    <div class="btn-group w-100 mb-2" role="group">
+                        <input checked class="btn-check" id="anim-axis-y" name="animAxis" type="radio" value="y">
+                        <label class="btn btn-outline-primary btn-sm" for="anim-axis-y">Yaw (Y)</label>
+
+                        <input class="btn-check" id="anim-axis-x" name="animAxis" type="radio" value="x">
+                        <label class="btn btn-outline-primary btn-sm" for="anim-axis-x">Pitch (X)</label>
+
+                        <input class="btn-check" id="anim-axis-z" name="animAxis" type="radio" value="z">
+                        <label class="btn btn-outline-primary btn-sm" for="anim-axis-z">Roll (Z)</label>
                     </div>
-                    <div class="form-check mb-2">
+
+                    <div class="mb-2">
+                        <div class="d-flex justify-content-between small text-muted">
+                            <label for="animFrames" class="form-label mb-0">Frames:</label>
+                            <span><strong id="animFramesVal">24</strong></span>
+                        </div>
+                        <input type="range" class="form-range" id="animFrames" min="0" max="20" step="1" value="10">
+                        <div class="small text-muted" id="animStep"></div>
+                    </div>
+
+                    <div class="form-check mb-1">
                         <input class="form-check-input" type="checkbox" id="animReverse">
                         <label class="form-check-label small" for="animReverse">Reverse rotation direction</label>
                     </div>
-                    <button type="button" class="btn btn-outline-primary btn-sm w-100" id="dlAnimPack" disabled>Download test pack (.zip)</button>
+
+                    <div class="form-check mb-2">
+                        <input checked class="form-check-input" type="checkbox" id="animIncludeHdr">
+                        <label class="form-check-label small" for="animIncludeHdr">Include HDR (.hdr.vtf) in zip</label>
+                    </div>
+
+                    <div class="form-check mb-2">
+                        <input checked class="form-check-input" type="checkbox" id="animIncludeExamples">
+                        <label class="form-check-label small" for="animIncludeExamples">Include VMT example in zip</label>
+                    </div>
+
+                    <div class="small mb-2"><a href="https://steamcommunity.com/sharedfiles/filedetails/?id=3815638045" target="_blank" rel="noopener">Lua proxy addon</a></div>
+
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-primary btn-sm flex-fill" id="dlAnimPack" disabled>Download pack (.zip)</button>
+                        <button type="button" class="btn btn-outline-warning btn-sm flex-fill" id="dlAnimHdr" disabled>Download .hdr.vtf</button>
+                    </div>
                     <div class="small text-muted mt-1" id="animStatus"></div>
                 </div>
 
@@ -535,28 +587,12 @@
                 <div class="main-placeholder" id="mainPlaceholder" role="button" tabindex="0">Drop or click to load a base matcap</div>
 
                 <div id="resultArea" style="display:none">
-                    <h3>Cubemap faces</h3>
                     <output id="facesOutput"></output>
 
                     <div class="d-flex gap-2 justify-content-center flex-wrap mt-3 mb-3">
                         <button class="btn btn-success" id="dlVtf">Download .vtf</button>
                         <button class="btn btn-outline-warning" id="dlVtfHdr">Download .hdr.vtf</button>
                         <button class="btn btn-outline-secondary" id="dlPngZip">Download 6 faces (.zip)</button>
-                    </div>
-
-                    <div class="d-flex justify-content-center mb-3">
-                        <fieldset title="Размер граней для .hdr.vtf">
-                            <div class="btn-group btn-group-sm" role="group">
-                                <input class="btn-check" id="hdrsize-full" name="hdrSizeDiv" type="radio" value="1">
-                                <label class="btn btn-outline-warning" for="hdrsize-full">HDR: full size</label>
-
-                                <input checked class="btn-check" id="hdrsize-half" name="hdrSizeDiv" type="radio" value="2">
-                                <label class="btn btn-outline-warning" for="hdrsize-half">HDR: /2</label>
-
-                                <input class="btn-check" id="hdrsize-quarter" name="hdrSizeDiv" type="radio" value="4">
-                                <label class="btn btn-outline-warning" for="hdrsize-quarter">HDR: /4</label>
-                            </div>
-                        </fieldset>
                     </div>
                 </div>
             </main>

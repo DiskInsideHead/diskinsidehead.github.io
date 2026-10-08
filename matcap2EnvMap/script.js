@@ -1,21 +1,8 @@
-// =====================================================================
-// Matcap -> EnvMap
-//
-// All heavy pixel work (layer compositing, mip pyramid, cubemap face
-// generation) lives in createEngineCore(). It is executed inside a Web
-// Worker so the UI (sliders, colour picker) never blocks. If workers are
-// unavailable it runs on the main thread in cooperative (yielding) mode.
-// =====================================================================
-
-// ------------------------------------------------------------------
-// Render engine core (must stay self-contained: it is stringified
-// and shipped to the worker)
-// ------------------------------------------------------------------
 function createEngineCore(post) {
     'use strict';
 
     const FACES = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
-    // Per-face basis: direction = A*a + B*b + C  (a, b in [-1, 1])
+
     const BASIS = {
         px: [0, 0, -1, 0, 1, 0, 1, 0, 0],
         nx: [0, 0, 1, 0, 1, 0, -1, 0, 0],
@@ -40,24 +27,21 @@ function createEngineCore(post) {
         difference: (b, l) => Math.abs(b - l)
     };
 
-    // ---- state ----
-    let base = null;                 // { data, w, h }
-    let back = null;                 // { data, w, h }
-    const layerPx = new Map();       // id -> Uint8ClampedArray (same size as base)
+    let base = null;
+    let back = null;
+    const layerPx = new Map();
     let baseVer = 0, layerVer = 0;
     let composite = null, compKey = '';
     let pyramid = null;
 
     let running = null, queued = null;
 
-    // ---- yielding (lets incoming messages be processed during long jobs) ----
     const chan = new MessageChannel();
     const yieldNow = () => new Promise(res => {
         chan.port1.onmessage = () => res();
         chan.port2.postMessage(0);
     });
 
-    // ---- sampling ----
     function sample(data, w, h, u, v, out) {
         u = u < 0 ? 0 : (u > 1 ? 1 : u);
         v = v < 0 ? 0 : (v > 1 ? 1 : v);
@@ -75,7 +59,6 @@ function createEngineCore(post) {
         out[2] = data[i00 + 2] * w00 + data[i10 + 2] * w10 + data[i01 + 2] * w01 + data[i11 + 2] * w11;
     }
 
-    // Same as sample(), but UVs outside the matcap disc are pulled onto its rim.
     function sampleDisc(data, w, h, u, v, out) {
         const nu = (u - 0.5) * 2, nv = (v - 0.5) * 2;
         const r2 = nu * nu + nv * nv;
@@ -89,7 +72,6 @@ function createEngineCore(post) {
 
     const smooth = t => { t = t < 0 ? 0 : (t > 1 ? 1 : t); return t * t * (3 - 2 * t); };
 
-    // ---- compositing of extra matcap layers over the base ----
     function ensureComposite(layerDefs) {
         const active = layerDefs.filter(l => layerPx.has(l.id));
         const key = baseVer + '|' + layerVer + '|' +
@@ -119,7 +101,6 @@ function createEngineCore(post) {
         composite = out;
     }
 
-    // ---- mip pyramid (used for blur back-fill and global softness) ----
     function buildDiscClamped(src, w, h) {
         const out = new Uint8ClampedArray(w * h * 4);
         const cx = (w - 1) / 2, cy = (h - 1) / 2;
@@ -204,8 +185,6 @@ function createEngineCore(post) {
         };
     }
 
-    // ---- face generation ----
-    // Returns an object of face buffers, or null if the job was aborted.
     async function generate(size, p, job) {
         ensureComposite(p.layers);
         const src = composite, sw = base.w, sh = base.h;
@@ -222,11 +201,9 @@ function createEngineCore(post) {
         const halfWidth = 0.4 * Math.pow(1 - p.edgeSharp, 2.2) + 0.002;
         const inv2hw = 1 / (2 * halfWidth);
 
-        // Solid fill (premultiplied by its alpha)
         const sA = p.solid[3];
         const sR = p.solid[0] * sA, sG = p.solid[1] * sA, sB = p.solid[2] * sA;
 
-        // Gradient fill (premultiplied interpolation, like CSS gradients)
         const a1 = p.grad1[3], a2 = p.grad2[3];
         const g1R = p.grad1[0] * a1, g1G = p.grad1[1] * a1, g1B = p.grad1[2] * a1;
         const g2R = p.grad2[0] * a2, g2G = p.grad2[1] * a2, g2B = p.grad2[2] * a2;
@@ -281,7 +258,7 @@ function createEngineCore(post) {
                             dn = dn < 0 ? 0 : (dn > 1 ? 1 : dn);
                             const t = smooth((dn - gInner) * gInv + 0.5);
                             const aa = a1 * (1 - t) + a2 * t;
-                            // fill over the matcap underneath
+
                             br = r * (1 - aa) + g1R * (1 - t) + g2R * t;
                             bg = g * (1 - aa) + g1G * (1 - t) + g2G * t;
                             bb = bl * (1 - aa) + g1B * (1 - t) + g2B * t;
@@ -318,7 +295,6 @@ function createEngineCore(post) {
         return faces;
     }
 
-    // ---- job queue: newest request wins; unfinished "final" jobs are aborted ----
     async function startNext() {
         if (running || !queued) return;
         const m = queued;
@@ -365,9 +341,6 @@ function createEngineCore(post) {
     };
 }
 
-// ------------------------------------------------------------------
-// Engine bootstrap (Worker, with main-thread fallback)
-// ------------------------------------------------------------------
 const engine = (() => {
     try {
         const code = `const core=(${createEngineCore.toString()})((m,t)=>self.postMessage(m,t));` +
@@ -384,9 +357,6 @@ const engine = (() => {
     }
 })();
 
-// ------------------------------------------------------------------
-// State (main thread)
-// ------------------------------------------------------------------
 let baseReady = false, srcW = 0, srcH = 0;
 let generatedFaces = null, generatedSize = 0;
 let backBmp = null;
@@ -397,7 +367,6 @@ let renderSeq = 0, shownSeq = 0;
 const DRAFT_SIZE = 128;
 const FINAL_DELAY = 250;
 
-// Colours: rgb 0..255, a 0..1
 const colorState = {
     solid: { rgb: [26, 26, 26], a: 1 },
     grad1: { rgb: [13, 110, 253], a: 1 },
@@ -424,14 +393,8 @@ const rotZInput = document.getElementById('rotZ');
 const ballController = document.getElementById('ballController');
 const ballHandle = document.getElementById('ballHandle');
 
-// Nothing in this app relies on native drag & drop from inside the page
-// (files are dropped from outside). Killing it prevents the browser from
-// "picking up" a selection / canvas while a slider is being dragged.
 document.addEventListener('dragstart', e => e.preventDefault());
 
-// ------------------------------------------------------------------
-// Image decoding / rasterizing
-// ------------------------------------------------------------------
 const isImageFile = f => !!f && (f.type.startsWith('image/') || /\.(png|jpe?g|webp|bmp|gif|avif)$/i.test(f.name));
 const closeBmp = b => { if (b && typeof b.close === 'function') b.close(); };
 
@@ -460,7 +423,6 @@ async function decodeImage(file) {
 }
 
 const scratchCanvas = document.createElement('canvas');
-// Returns a fresh Uint8ClampedArray (its buffer can be transferred to the worker).
 function rasterize(src, w, h) {
     scratchCanvas.width = w;
     scratchCanvas.height = h;
@@ -471,9 +433,6 @@ function rasterize(src, w, h) {
     return ctx.getImageData(0, 0, w, h).data;
 }
 
-// ------------------------------------------------------------------
-// Slots
-// ------------------------------------------------------------------
 function drawCover(ctx, bmp, size, fit) {
     const s = Math.max(size / bmp.width, size / bmp.height);
     const dw = bmp.width * s, dh = bmp.height * s;
@@ -482,7 +441,6 @@ function drawCover(ctx, bmp, size, fit) {
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(bmp, ox, oy, dw, dh);
     if (fit) {
-        // overlay: the circle that will be treated as the matcap sphere
         const cx = ox + fit.cx * dw, cy = oy + fit.cy * dh;
         const r = fit.r * Math.min(bmp.width, bmp.height) * s;
         ctx.save();
@@ -496,11 +454,6 @@ function drawCover(ctx, bmp, size, fit) {
     }
 }
 
-// ------------------------------------------------------------------
-// Matcap circle fit: the sphere does not always touch the image edges.
-// Every matcap (base / layers / back) is re-cropped so that its circle
-// fills a square exactly, which is what the engine expects.
-// ------------------------------------------------------------------
 function normalizeMatcap(src, fit, size) {
     const w = src.width, h = src.height;
     const R = fit.r * Math.min(w, h);
@@ -517,9 +470,6 @@ function fitOutSize(bmp, fit) {
     return Math.max(64, Math.min(2048, s));
 }
 
-// Finds the sphere by peeling off background: first the image border colour,
-// then (if what remains is still a filled square, e.g. a screenshot frame)
-// the colour just inside it. Returns {cx, cy, r} (fractions) or null.
 function detectDisc(bmp) {
     const k = Math.min(1, 512 / Math.max(bmp.width, bmp.height));
     const w = Math.max(8, Math.round(bmp.width * k));
@@ -548,7 +498,7 @@ function detectDisc(bmp) {
         const alphaBg = cols.every(c => c[3] < 16);
         let bg = [0, 0, 0, 255];
         if (!alphaBg) {
-            if (cols.some(c => dist(c, cols[0]) > 40)) break;      // corners disagree
+            if (cols.some(c => dist(c, cols[0]) > 40)) break;
             bg = cols[0];
         }
         const rowCnt = new Int32Array(h), colCnt = new Int32Array(w);
@@ -569,12 +519,11 @@ function detectDisc(bmp) {
         found = { x0, y0, x1, y1, bw, bh };
         const fill = total / (bw * bh);
         const shrunk = (box.x1 - box.x0 + 1 - bw) > 2 || (box.y1 - box.y0 + 1 - bh) > 2;
-        if (fill > 0.92 && shrunk) { box = { x0, y0, x1, y1 }; continue; }   // still a square frame
+        if (fill > 0.92 && shrunk) { box = { x0, y0, x1, y1 }; continue; }
         break;
     }
     if (!found) return null;
 
-    // a filled square is not a sphere
     let cx = (found.x0 + found.x1 + 1) / 2 / w;
     let cy = (found.y0 + found.y1 + 1) / 2 / h;
     let r = ((found.bw + found.bh) / 4) / Math.min(w, h);
@@ -583,13 +532,12 @@ function detectDisc(bmp) {
     return { cx, cy, r };
 }
 
-// Small collapsible panel: circle size + offset + auto-detect.
 function createFitPanel({ getBitmap, onChange }) {
     const fit = { cx: 0.5, cy: 0.5, r: 0.5 };
     const el = document.createElement('details');
     el.className = 'fit-panel mt-2';
     el.innerHTML = `
-        <summary>Circle fit (if the sphere doesn't touch the edges)</summary>
+        <summary>Circle fit</summary>
         <div class="pt-2">
             <div class="d-flex justify-content-between small text-muted"><span>Circle size</span><span><strong data-v="d">100</strong>%</span></div>
             <input type="range" class="form-range" data-k="d" min="20" max="150" step="0.1" value="100">
@@ -633,7 +581,6 @@ function createFitPanel({ getBitmap, onChange }) {
 
     return {
         el, fit,
-        // silently fit a freshly loaded image (caller triggers the render)
         autoFit(bmp) {
             Object.assign(fit, detectDisc(bmp) || { cx: 0.5, cy: 0.5, r: 0.5 });
             syncUI();
@@ -708,9 +655,6 @@ function createSlot({ caption = '', large = false, clearable = false, onFile, on
     return api;
 }
 
-// ------------------------------------------------------------------
-// Base matcap
-// ------------------------------------------------------------------
 let baseSeq = 0;
 let baseBmp = null;
 const baseSlot = createSlot({ large: true, onFile: loadBase });
@@ -737,7 +681,6 @@ async function loadBase(file) {
     applyBase(false);
 }
 
-// (Re)crop the base so its circle fills the square, push it to the engine.
 function applyBase(draft) {
     if (!baseBmp) return;
     const fit = baseFit.fit;
@@ -753,13 +696,13 @@ function applyBase(draft) {
     layers.forEach(l => rebuildCache(l));
 
     generateBtn.disabled = false;
-        const _ap = document.getElementById('dlAnimPack'); if (_ap) _ap.disabled = false;
+    ['dlAnimPack', 'dlAnimHdr'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.disabled = false;
+    });
     triggerRender(draft);
 }
 
-// ------------------------------------------------------------------
-// Back-face second matcap
-// ------------------------------------------------------------------
 const backMatcapSlot = createSlot({
     caption: 'Back Matcap',
     clearable: true,
@@ -804,9 +747,6 @@ function clearBackMatcap() {
     triggerRender(false);
 }
 
-// ------------------------------------------------------------------
-// Colour controls (solid / gradient) with alpha
-// ------------------------------------------------------------------
 function hexToRgb(hex) {
     hex = hex.replace(/^#/, '');
     if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
@@ -836,8 +776,6 @@ function bindColorControl(key, { picker, alpha, alphaVal, pipette, hexLabel }) {
         if (render) triggerRender(isDraft);
     };
 
-    // 'input' fires continuously while dragging inside the native picker;
-    // rendering is coalesced in the worker so this stays cheap.
     picker.addEventListener('input', () => apply(true));
     picker.addEventListener('change', () => apply(false));
     alpha.addEventListener('input', () => apply(true));
@@ -875,16 +813,11 @@ bindColorControl('grad2', {
     pipette: document.getElementById('pipetteGrad2')
 });
 
-// ------------------------------------------------------------------
-// Layers
-// ------------------------------------------------------------------
 const layers = [];
 let nextLayerId = 1;
 
-// Rasterize the layer's matcap at base resolution and hand it to the engine.
 function rebuildCache(layer) {
     if (layer.matcap && baseReady) {
-        // crop to the layer's own circle, scaled to the base sphere size
         const px = rasterize(normalizeMatcap(layer.matcap, layer.fitPanel.fit, srcW), srcW, srcH);
         layer.hasPx = true;
         engine.send({ type: 'setLayer', id: layer.id, data: px }, [px.buffer]);
@@ -1037,9 +970,6 @@ function removeLayer(layer, card) {
 
 addLayerBtn.addEventListener('click', addLayer);
 
-// ------------------------------------------------------------------
-// Drag & drop base matcap
-// ------------------------------------------------------------------
 mainPlaceholder.addEventListener('click', () => baseSlot.open());
 mainPlaceholder.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -1065,9 +995,6 @@ window.addEventListener('drop', e => e.preventDefault());
 
 addLayer();
 
-// ------------------------------------------------------------------
-// Interactive UI & Unified Slider Binder
-// ------------------------------------------------------------------
 function setupInteractiveSlider(id, valId, formatFn = v => v) {
     const input = document.getElementById(id);
     const valSpan = document.getElementById(valId);
@@ -1100,9 +1027,6 @@ setupInteractiveSlider('backRadius', 'backRadiusVal', v => v.toFixed(2));
 setupInteractiveSlider('backEdgeSharpness', 'backEdgeSharpnessVal', v => Math.round(v));
 setupInteractiveSlider('globalSoftness', 'globalSoftnessVal', v => Math.round(v));
 
-// ------------------------------------------------------------------
-// Rotation & 3D Ball
-// ------------------------------------------------------------------
 function updateHandlePosition(pitchDeg, yawDeg) {
     if (!ballController || !ballHandle) return;
     const radius = ballController.clientWidth / 2;
@@ -1135,8 +1059,6 @@ function handleBallMove(e) {
 }
 
 if (ballController) {
-    // Pointer events + pointer capture: works for mouse/touch/pen and keeps
-    // receiving moves even when the cursor leaves the ball.
     ballController.addEventListener('pointerdown', e => {
         e.preventDefault();
         isBallDragging = true;
@@ -1187,10 +1109,8 @@ document.querySelectorAll('input[name="backFill"]').forEach(input => {
 });
 updateBackFillUI();
 
-['faceSize', 'pixelFormat', 'flipRows'].forEach(name => {
-    document.querySelectorAll(`input[name="${name}"]`).forEach(input => {
-        input.addEventListener('change', () => triggerRender(false));
-    });
+document.querySelectorAll('input[name="faceSize"]').forEach(input => {
+    input.addEventListener('change', () => triggerRender(false));
 });
 
 function getBackFillMode() {
@@ -1217,9 +1137,6 @@ function getRotations() {
     return { rx, ry, rz };
 }
 
-// ------------------------------------------------------------------
-// Render scheduling (main thread side)
-// ------------------------------------------------------------------
 function collectParams() {
     const { rx, ry, rz } = getRotations();
     const c = colorState;
@@ -1246,19 +1163,19 @@ function requestRender(size, final) {
     engine.send({ type: 'render', seq: ++renderSeq, size, final, p: collectParams() });
 }
 
-// isDraft: quick low-res preview now, full-res result once input settles.
 function triggerRender(isDraft = false) {
     if (!baseReady || animBusy) return;
     clearTimeout(renderTimer);
+    const size = getFaceSize();
     if (isDraft) {
-        requestRender(Math.min(DRAFT_SIZE, getFaceSize()), false);
-        renderTimer = setTimeout(() => requestRender(getFaceSize(), true), FINAL_DELAY);
+        requestRender(Math.min(DRAFT_SIZE, size), false);
+        renderTimer = setTimeout(() => requestRender(size, true), FINAL_DELAY);
     } else {
-        requestRender(getFaceSize(), true);
+        requestRender(size, true);
     }
 }
 
-const framePending = new Map();   // seq -> { resolve, reject } for animated-pack renders
+const framePending = new Map();
 let animBusy = false;
 
 function handleEngineMessage(m) {
@@ -1279,7 +1196,6 @@ function handleEngineMessage(m) {
     if (m.final) {
         generatedFaces = m.faces;
         generatedSize = m.size;
-        // 7th VTF face (sphere map slot) = the original circle-fitted matcap
         if (baseBmp) {
             const cv = normalizeMatcap(baseBmp, baseFit.fit, m.size);
             generatedFaces.sphere = cv.getContext('2d').getImageData(0, 0, m.size, m.size).data;
@@ -1294,13 +1210,13 @@ function canvasPngBytes(canvas) {
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return bytes;
 }
+
 function renderPreview(faces, size) {
     const holder = document.getElementById('facesOutput');
     resultArea.style.display = 'block';
     const placeholder = document.getElementById('mainPlaceholder');
     if (placeholder) placeholder.style.display = 'none';
 
-    // 7th image: the original (circle-fitted) base matcap, shown next to the faces
     if (baseBmp) {
         let mc = holder.querySelector('.face-cell[data-face="matcap"] canvas');
         if (!mc) {
@@ -1315,8 +1231,14 @@ function renderPreview(faces, size) {
             cell.appendChild(label);
             holder.appendChild(cell);
         }
-        mc.width = mc.height = size;
-        mc.getContext('2d').drawImage(normalizeMatcap(baseBmp, baseFit.fit, size), 0, 0);
+        const f = baseFit.fit;
+        const key = `${size}|${f.cx}|${f.cy}|${f.r}`;
+        if (mc._bmp !== baseBmp || mc._key !== key) {
+            mc.width = mc.height = size;
+            mc.getContext('2d').drawImage(normalizeMatcap(baseBmp, f, size), 0, 0);
+            mc._bmp = baseBmp;
+            mc._key = key;
+        }
     }
 
     for (const face of FACES) {
@@ -1349,9 +1271,6 @@ const FACES = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
 
 generateBtn.addEventListener('click', () => triggerRender(false));
 
-// ------------------------------------------------------------------
-// Export & VTF Packing
-// ------------------------------------------------------------------
 const VTF_FORMATS = {
     RGBA8888: 0,
     BGR888: 3,
@@ -1521,6 +1440,29 @@ function downsampleFace(src, size) {
     return out;
 }
 
+function downsampleFaceN(rgba, size, times) {
+    let cur = rgba, curSize = size;
+    for (let i = 0; i < times; i++) {
+        cur = downsampleFace(cur, curSize);
+        curSize /= 2;
+    }
+    return { faces: cur, size: curSize };
+}
+
+function scaleFacesDown(faces, curSize, targetSize) {
+    if (!faces || targetSize >= curSize) return faces;
+    const times = Math.round(Math.log2(curSize / targetSize));
+    if (times <= 0) return faces;
+    const outFaces = {};
+    for (const face of FACES) {
+        outFaces[face] = downsampleFaceN(faces[face], curSize, times).faces;
+    }
+    if (faces.sphere) {
+        outFaces.sphere = downsampleFaceN(faces.sphere, curSize, times).faces;
+    }
+    return outFaces;
+}
+
 function buildMipChain(faces, size, minSize) {
     const chain = [{ size, faces }];
     let curSize = size, curFaces = faces;
@@ -1589,7 +1531,7 @@ function buildVTFGeneric(faces, size, flipRows, format, minSize) {
     for (let i = mipChain.length - 1; i >= 0; i--) {
         const level = mipChain[i];
         for (const face of FACES) writeFace(level.faces[face], level.size);
-        writeFace(level.faces.sphere || level.faces[FACES[0]], level.size);   // 7th face: matcap
+        writeFace(level.faces.sphere || level.faces[FACES[0]], level.size);
     }
 
     return new Uint8Array(buf);
@@ -1604,34 +1546,6 @@ function buildVTFHDR(faces, size, flipRows) {
     return buildVTFGeneric(faces, size, flipRows, 'RGBA16161616F', 1);
 }
 
-function downsampleFaceN(rgba, size, times) {
-    let cur = rgba, curSize = size;
-    for (let i = 0; i < times; i++) {
-        cur = downsampleFace(cur, curSize);
-        curSize /= 2;
-    }
-    return { faces: cur, size: curSize };
-}
-
-function shrinkFacesForHDR(faces, size, divisor) {
-    if (divisor <= 1) return { faces, size };
-    const times = Math.log2(divisor);
-    const outFaces = {};
-    let outSize = size;
-    for (const face of FACES) {
-        const r = downsampleFaceN(faces[face], size, times);
-        outFaces[face] = r.faces;
-        outSize = r.size;
-    }
-    if (faces.sphere) outFaces.sphere = downsampleFaceN(faces.sphere, size, times).faces;
-    return { faces: outFaces, size: outSize };
-}
-
-function getHdrSizeDivisor() {
-    const checked = document.querySelector('input[name="hdrSizeDiv"]:checked');
-    return checked ? parseInt(checked.value, 10) : 2;
-}
-
 function getMatPath() {
     const matInput = document.getElementById('matPath');
     return matInput ? matInput.value.trim() : 'material';
@@ -1640,6 +1554,11 @@ function getMatPath() {
 function getFaceSize() {
     const checked = document.querySelector('input[name="faceSize"]:checked');
     return checked ? parseInt(checked.value, 10) : 512;
+}
+
+function getHdrFaceSize() {
+    const checked = document.querySelector('input[name="hdrFaceSize"]:checked');
+    return checked ? parseInt(checked.value, 10) : 256;
 }
 
 function getPixelFormat() {
@@ -1745,56 +1664,68 @@ function download(data, filename, mime) {
     a.remove();
 }
 
-document.getElementById('dlVtf').addEventListener('click', () => {
-    if (!generatedFaces) return;
-    const flip = getFlipRows();
-    const format = getPixelFormat();
-    const vtf = buildVTF(generatedFaces, generatedSize, flip, format);
-    const matPath = getMatPath();
-    const name = matPath.split('/').pop() + '_env.vtf';
-    download(vtf, name, 'application/octet-stream');
-});
+let exportRendered = false;
 
-const dlVtfHdrBtn = document.getElementById('dlVtfHdr');
-if (dlVtfHdrBtn) {
-    dlVtfHdrBtn.addEventListener('click', () => {
-        if (!generatedFaces) return;
-        const flip = getFlipRows();
-        const divisor = getHdrSizeDivisor();
-        const { faces: hdrFaces, size: hdrSize } = shrinkFacesForHDR(generatedFaces, generatedSize, divisor);
-        const vtf = buildVTFHDR(hdrFaces, hdrSize, flip);
-        const matPath = getMatPath();
-        const name = matPath.split('/').pop() + '_env.hdr.vtf';
-        download(vtf, name, 'application/octet-stream');
+async function getFacesAt(size) {
+    if (size <= generatedSize) return scaleFacesDown(generatedFaces, generatedSize, size);
+    exportRendered = true;
+    const res = await renderFrameAsync(size, collectParams());
+    if (baseBmp) {
+        const cv = normalizeMatcap(baseBmp, baseFit.fit, size);
+        res.faces.sphere = cv.getContext('2d').getImageData(0, 0, size, size).data;
+    }
+    return res.faces;
+}
+
+function setupExport(id, run) {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        if (!generatedFaces || btn.disabled) return;
+        btn.disabled = true;
+        try {
+            await run();
+        } catch (err) {
+            console.error(err);
+        } finally {
+            btn.disabled = false;
+            if (exportRendered) {
+                exportRendered = false;
+                triggerRender(false);
+            }
+        }
     });
 }
 
-document.getElementById('dlPngZip').addEventListener('click', () => {
-    if (!generatedFaces) return;
-    const files = [];
-    for (const face of FACES) {
-        const size = generatedSize;
-        const canvas = document.createElement('canvas');
-        canvas.width = size; canvas.height = size;
-        const ctx = canvas.getContext('2d');
-        ctx.putImageData(new ImageData(generatedFaces[face], size, size), 0, 0);
-        const dataUrl = canvas.toDataURL('image/png');
-        const b64 = dataUrl.split(',')[1];
-        const bin = atob(b64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        files.push({ name: `matcap_${face}.png`, data: bytes });
-    }
-    const mcCanvas = document.querySelector('.face-cell[data-face="matcap"] canvas');
-    if (mcCanvas) files.push({ name: 'matcap_original.png', data: canvasPngBytes(mcCanvas) });
-    const zip = buildZip(files);
-    const matPath = getMatPath();
-    download(zip, matPath.split('/').pop() + '_faces.zip', 'application/zip');
+const fileBase = () => getMatPath().split('/').pop();
+
+setupExport('dlVtf', async () => {
+    const size = getFaceSize();
+    const faces = await getFacesAt(size);
+    download(buildVTF(faces, size, getFlipRows(), getPixelFormat()), fileBase() + '_env.vtf', 'application/octet-stream');
 });
 
-// ------------------------------------------------------------------
-// TEST: animated yaw cubemap pack (frames of one VTF + Lua proxy)
-// ------------------------------------------------------------------
+setupExport('dlVtfHdr', async () => {
+    const size = getHdrFaceSize();
+    const faces = await getFacesAt(size);
+    download(buildVTFHDR(faces, size, getFlipRows()), fileBase() + '_env.hdr.vtf', 'application/octet-stream');
+});
+
+setupExport('dlPngZip', async () => {
+    const size = getFaceSize();
+    const faces = await getFacesAt(size);
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const files = FACES.map(face => {
+        ctx.putImageData(new ImageData(faces[face], size, size), 0, 0);
+        return { name: `matcap_${face}.png`, data: canvasPngBytes(canvas) };
+    });
+    const mcCanvas = document.querySelector('.face-cell[data-face="matcap"] canvas');
+    if (mcCanvas) files.push({ name: 'matcap_original.png', data: canvasPngBytes(mcCanvas) });
+    download(buildZip(files), fileBase() + '_faces.zip', 'application/zip');
+});
+
 function buildVTFAnimated(frameFaces, size, flipRows, format) {
     const minSize = format === 'DXT1' ? 4 : 1;
     const frameCount = frameFaces.length;
@@ -1812,12 +1743,11 @@ function buildVTFAnimated(frameFaces, size, flipRows, format) {
     const wU32 = v => { dv.setUint32(o, v, true); o += 4; };
     const wF32 = v => { dv.setFloat32(o, v, true); o += 4; };
 
-    // Same 64-byte header as buildVTFGeneric, but with frame count = N
     wU8(0x56); wU8(0x54); wU8(0x46); wU8(0x00);
     wU32(7); wU32(1);
     wU32(headerSize);
     wU16(size); wU16(size);
-    wU32(0x00004000 | 0x00000200);      // ENVMAP | NOLOD
+    wU32(0x00004000 | 0x00000200);
     wU16(frameCount); wU16(0);
     wU32(0);
     wF32(0.5); wF32(0.5); wF32(0.5);
@@ -1837,7 +1767,6 @@ function buildVTFAnimated(frameFaces, size, flipRows, format) {
         o += faceBytes;
     };
 
-    // VTF data order: mip (smallest first) -> frame -> face
     for (let mip = mipCount - 1; mip >= 0; mip--) {
         for (let fr = 0; fr < frameCount; fr++) {
             const level = chains[fr][mip];
@@ -1846,6 +1775,26 @@ function buildVTFAnimated(frameFaces, size, flipRows, format) {
         }
     }
     return new Uint8Array(buf);
+}
+
+function prepareFramesForSize(frameFaces, curSize, targetSize) {
+    if (targetSize >= curSize) return { frames: frameFaces, size: curSize };
+    const times = Math.round(Math.log2(curSize / targetSize));
+    if (times <= 0) return { frames: frameFaces, size: curSize };
+    let finalSize = targetSize;
+    const scaledFrames = frameFaces.map(f => {
+        const outFaces = {};
+        for (const face of FACES) {
+            const r = downsampleFaceN(f[face], curSize, times);
+            outFaces[face] = r.faces;
+            finalSize = r.size;
+        }
+        if (f.sphere) {
+            outFaces.sphere = downsampleFaceN(f.sphere, curSize, times).faces;
+        }
+        return outFaces;
+    });
+    return { frames: scaledFrames, size: finalSize };
 }
 
 function renderFrameAsync(size, p) {
@@ -1859,98 +1808,195 @@ function renderFrameAsync(size, p) {
     });
 }
 
-function animLuaSource(frames) {
-    return `-- lua/matproxy/envcam.lua  (client side)
--- Picks the $envmapframe of an animated cubemap from the camera yaw,
--- so the reflection appears to follow the view.
-local FRAMES = ${frames}
-
-matproxy.Add({
-    name = "EnvCamYaw",
-    init = function(self, mat, values) end,
-    bind = function(self, mat, ent)
-        local vs = render.GetViewSetup()
-        local yaw = vs and vs.angles and vs.angles.y or 0
-        local idx = math.floor((yaw % 360) / 360 * FRAMES + 0.5) % FRAMES
-        mat:SetInt("$envmapframe", idx)
-    end
-})
-`;
-}
-
-function animVmtSnippet(envPath) {
+function animVmtSnippet(envPath, frames) {
     return `// Add to your VMT (keep your other parameters and proxies):
 "$envmap" "${envPath}"
 "$envmapframe" 0
 
+// Source Engine will automatically load "${envPath}.hdr.vtf" in HDR mode,
+// or "${envPath}.vtf" in LDR mode.
+
 Proxies
 {
-    EnvCamYaw { }
+    dih_envmapcameraspace
+    {
+        "offset" "180"
+        "frames" "${frames}"
+    }
 }
 `;
 }
 
 (function setupAnimPack() {
-    const btn = document.getElementById('dlAnimPack');
+    const btnPack = document.getElementById('dlAnimPack');
+    const btnHdr = document.getElementById('dlAnimHdr');
     const framesInput = document.getElementById('animFrames');
     const reverse = document.getElementById('animReverse');
+    const includeHdrCheckbox = document.getElementById('animIncludeHdr');
+    const includeExamplesCheckbox = document.getElementById('animIncludeExamples');
+    const framesVal = document.getElementById('animFramesVal');
     const status = document.getElementById('animStatus');
     const stepLabel = document.getElementById('animStep');
-    if (!btn || !framesInput) return;
+    if (!btnPack || !framesInput) return;
 
-    const readFrames = () => Math.max(2, Math.min(72, parseInt(framesInput.value, 10) || 24));
-    const updateStep = () => { stepLabel.textContent = (360 / readFrames()).toFixed(1).replace(/\.0$/, '') + '°/frame'; };
+    let animCache = null;
+
+    const FRAME_STEPS = [4, 5, 6, 8, 9, 10, 12, 15, 18, 20, 24, 30, 36, 40, 45, 60, 72, 90, 120, 180, 360];
+    const readFrames = () => FRAME_STEPS[Math.max(0, Math.min(FRAME_STEPS.length - 1, parseInt(framesInput.value, 10) || 0))];
+    const getAnimAxis = () => {
+        const checked = document.querySelector('input[name="animAxis"]:checked');
+        return checked ? checked.value : 'y';
+    };
+
+    const updateStep = () => {
+        const N = readFrames();
+        const perFrame = size => faceByteSize(size, 'RGBA16161616F') * 7 * 4 / 3;
+        const ldrSize = Math.min(getFaceSize(), 256);
+        const hdrSize = Math.min(getHdrFaceSize(), 256);
+        let bytes = N * faceByteSize(ldrSize, getPixelFormat()) * 7 * 4 / 3;
+        if (!includeHdrCheckbox || includeHdrCheckbox.checked) bytes += N * perFrame(hdrSize);
+        framesVal.textContent = N;
+        stepLabel.textContent = `${(360 / N).toFixed(1).replace(/\.0$/, '')}°/frame, ~${(bytes / 1048576).toFixed(1)} MB`;
+    };
     framesInput.addEventListener('input', updateStep);
+    document.querySelectorAll('input[name="faceSize"], input[name="hdrFaceSize"], input[name="pixelFormat"], #animIncludeHdr')
+        .forEach(el => el.addEventListener('change', updateStep));
     updateStep();
-    if (baseReady) btn.disabled = false;
 
-    btn.addEventListener('click', async () => {
+    document.querySelectorAll('input[name="animAxis"]').forEach(r => {
+        r.addEventListener('change', () => { animCache = null; });
+    });
+    if (reverse) reverse.addEventListener('change', () => { animCache = null; });
+
+    const setBusy = busy => {
+        animBusy = busy;
+        btnPack.disabled = busy || !baseReady;
+        if (btnHdr) btnHdr.disabled = busy || !baseReady;
+    };
+
+    if (baseReady) {
+        btnPack.disabled = false;
+        if (btnHdr) btnHdr.disabled = false;
+    }
+
+    async function getOrRenderFrames(N, size, axis, dir) {
+        const basePars = collectParams();
+        const cfgKey = `${N}|${size}|${axis}|${dir}|${JSON.stringify(basePars)}`;
+        if (animCache && animCache.key === cfgKey) {
+            return animCache.frames;
+        }
+
+        let sphere = null;
+        if (baseBmp) {
+            const cv = normalizeMatcap(baseBmp, baseFit.fit, size);
+            sphere = cv.getContext('2d').getImageData(0, 0, size, size).data;
+        }
+
+        const frames = [];
+        for (let i = 0; i < N; i++) {
+            status.textContent = `Rendering frame ${i + 1} / ${N}…`;
+            const angleOffset = dir * i * 2 * Math.PI / N;
+            const p = Object.assign({}, basePars);
+            if (axis === 'x') {
+                p.rx = basePars.rx + angleOffset;
+            } else if (axis === 'z') {
+                p.rz = basePars.rz + angleOffset;
+            } else {
+                p.ry = basePars.ry + angleOffset;
+            }
+
+            const res = await renderFrameAsync(size, p);
+            if (sphere) res.faces.sphere = sphere;
+            frames.push(res.faces);
+        }
+
+        animCache = { key: cfgKey, frames, size };
+        return frames;
+    }
+
+    btnPack.addEventListener('click', async () => {
         if (!baseReady || animBusy) return;
         const N = readFrames();
-        const size = Math.min(getFaceSize(), 256);
+        const ldrSize = Math.min(getFaceSize(), 256);
+        const hdrSize = Math.min(getHdrFaceSize(), 256);
+        const renderSize = Math.max(ldrSize, hdrSize);
+
         const format = getPixelFormat();
         const flip = getFlipRows();
         const dir = reverse.checked ? -1 : 1;
+        const axis = getAnimAxis();
+        const includeHdr = includeHdrCheckbox ? includeHdrCheckbox.checked : true;
 
-        animBusy = true;
-        btn.disabled = true;
+        setBusy(true);
         clearTimeout(renderTimer);
         try {
-            const basePars = collectParams();
-            let sphere = null;
-            if (baseBmp) {
-                const cv = normalizeMatcap(baseBmp, baseFit.fit, size);
-                sphere = cv.getContext('2d').getImageData(0, 0, size, size).data;
-            }
-            const frames = [];
-            for (let i = 0; i < N; i++) {
-                status.textContent = `Rendering frame ${i + 1} / ${N}…`;
-                const p = Object.assign({}, basePars, { ry: basePars.ry + dir * i * 2 * Math.PI / N });
-                const res = await renderFrameAsync(size, p);
-                if (sphere) res.faces.sphere = sphere;
-                frames.push(res.faces);
-            }
+            const rawFrames = await getOrRenderFrames(N, renderSize, axis, dir);
+
             status.textContent = 'Packing VTF…';
             await new Promise(r => setTimeout(r, 0));
-            const vtf = buildVTFAnimated(frames, size, flip, format);
+            const { frames: ldrFrames } = prepareFramesForSize(rawFrames, renderSize, ldrSize);
+            const vtf = buildVTFAnimated(ldrFrames, ldrSize, flip, format);
 
             const matPath = getMatPath();
             const last = matPath.split('/').pop();
             const vtfName = last + '_envanim.vtf';
-            const files = [
-                { name: vtfName, data: vtf },
-                { name: 'lua/matproxy/envcam.lua', data: new TextEncoder().encode(animLuaSource(N)) },
-                { name: 'vmt_snippet.txt', data: new TextEncoder().encode(animVmtSnippet(matPath + '_envanim')) }
-            ];
+            const files = [{ name: vtfName, data: vtf }];
+            if (!includeExamplesCheckbox || includeExamplesCheckbox.checked) {
+                files.push({ name: 'vmt_snippet.txt', data: new TextEncoder().encode(animVmtSnippet(matPath + '_envanim', N)) });
+            }
+
+            let hdrInfo = '';
+            if (includeHdr) {
+                status.textContent = 'Packing HDR VTF…';
+                await new Promise(r => setTimeout(r, 0));
+                const { frames: hdrFrames } = prepareFramesForSize(rawFrames, renderSize, hdrSize);
+                const vtfHdr = buildVTFAnimated(hdrFrames, hdrSize, flip, 'RGBA16161616F');
+                files.push({ name: last + '_envanim.hdr.vtf', data: vtfHdr });
+                hdrInfo = ` + HDR (${hdrSize}px, ${(vtfHdr.length / 1048576).toFixed(2)} MB)`;
+            }
+
+            status.textContent = 'Zipping files…';
+            await new Promise(r => setTimeout(r, 0));
             download(buildZip(files), last + '_envanim_pack.zip', 'application/zip');
-            status.textContent = `Done: ${N} frames, ${size}px, ${(vtf.length / 1048576).toFixed(2)} MB`;
+            status.textContent = `Done: ${N} frames (${axis.toUpperCase()}), LDR (${ldrSize}px, ${(vtf.length / 1048576).toFixed(2)} MB)${hdrInfo}`;
         } catch (err) {
             console.error(err);
             status.textContent = 'Failed: ' + (err && err.message ? err.message : err);
         } finally {
-            animBusy = false;
-            btn.disabled = false;
-            triggerRender(false);   // restore the normal preview
+            setBusy(false);
+            triggerRender(false);
         }
     });
+
+    if (btnHdr) {
+        btnHdr.addEventListener('click', async () => {
+            if (!baseReady || animBusy) return;
+            const N = readFrames();
+            const hdrSize = Math.min(getHdrFaceSize(), 256);
+            const flip = getFlipRows();
+            const dir = reverse.checked ? -1 : 1;
+            const axis = getAnimAxis();
+
+            setBusy(true);
+            clearTimeout(renderTimer);
+            try {
+                const rawFrames = await getOrRenderFrames(N, hdrSize, axis, dir);
+
+                status.textContent = 'Packing HDR VTF…';
+                await new Promise(r => setTimeout(r, 0));
+                const vtfHdr = buildVTFAnimated(rawFrames, hdrSize, flip, 'RGBA16161616F');
+
+                const matPath = getMatPath();
+                const last = matPath.split('/').pop();
+                download(vtfHdr, last + '_envanim.hdr.vtf', 'application/octet-stream');
+                status.textContent = `Done: HDR downloaded (${N} frames, ${hdrSize}px, ${(vtfHdr.length / 1048576).toFixed(2)} MB)`;
+            } catch (err) {
+                console.error(err);
+                status.textContent = 'Failed: ' + (err && err.message ? err.message : err);
+            } finally {
+                setBusy(false);
+                triggerRender(false);
+            }
+        });
+    }
 })();
