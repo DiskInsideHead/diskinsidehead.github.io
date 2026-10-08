@@ -1923,7 +1923,7 @@ Proxies
 
         const format = getPixelFormat();
         const flip = getFlipRows();
-        const dir = reverse.checked ? -1 : 1;
+        const dir = reverse.checked ? 1 : -1;
         const axis = getAnimAxis();
         const includeHdr = includeHdrCheckbox ? includeHdrCheckbox.checked : true;
 
@@ -1974,7 +1974,7 @@ Proxies
             const N = readFrames();
             const hdrSize = Math.min(getHdrFaceSize(), 256);
             const flip = getFlipRows();
-            const dir = reverse.checked ? -1 : 1;
+            const dir = reverse.checked ? 1 : -1;
             const axis = getAnimAxis();
 
             setBusy(true);
