@@ -66,8 +66,10 @@
             }
             [hidden] { display: none !important; }
             .main-placeholder {
-                margin-top: 10vh;
-                min-height: 40vh;
+                flex: 1;
+                max-width: none;
+                margin: 0;
+                min-height: 0;
                 display: flex;
                 align-items: center;
                 justify-content: center;
@@ -156,6 +158,7 @@
             }
             .base-dims { color: #6c757d; }
             .slider-row + .slider-row { margin-top: 4px; }
+            .env-off { opacity: .35; pointer-events: none; }
             .section-title { font-size: 1rem; margin: 16px 0 6px; }
             @media (max-width: 900px) {
                 html, body {
@@ -180,7 +183,7 @@
                     height: auto;
                     overflow-y: visible;
                 }
-                .main-placeholder { margin-top: 6vh; }
+                .main-placeholder { min-height: 60vh; flex: none; }
             }
             #facesOutput {
                 display: grid;
@@ -205,6 +208,8 @@
                 border-radius: 6px;
                 background: #000;
             }
+            #facesOutput .face-cell[data-face="py"] canvas { transform: rotate(90deg); }
+            #facesOutput .face-cell[data-face="ny"] canvas { transform: rotate(-90deg); }
             #facesOutput span {
                 display: block;
                 font-size: 12px;
@@ -277,12 +282,13 @@
                 </div>
 
                 <div class="settings-area p-3 border rounded bg-light">
-                    <h3>Base matcap</h3>
+                    <h3>Base matcap / VTF envmap</h3>
                     <div class="base-row">
                         <div id="baseSlotHost"></div>
                         <div class="base-info" id="baseInfo" hidden>
                             <div class="base-name" id="baseName"></div>
                             <div class="base-dims" id="baseDims"></div>
+                            <button type="button" class="btn btn-sm btn-outline-danger mt-1" id="clearBaseBtn">Clear</button>
                         </div>
                     </div>
                     <div id="baseFitHost"></div>
@@ -455,7 +461,13 @@
                             <label for="backMatcapScale" class="form-label mb-0">Back scale:</label>
                             <span><strong id="backMatcapScaleVal">1.00</strong>×</span>
                         </div>
-                        <input type="range" class="form-range" id="backMatcapScale" min="0.5" max="3.0" step="0.01" value="1.0">
+                        <input type="range" class="form-range mb-2" id="backMatcapScale" min="0.5" max="3.0" step="0.01" value="1.0">
+                        <div class="d-flex justify-content-between small text-muted">
+                            <label for="backRimAngle" class="form-label mb-0">Back rim angle:</label>
+                            <span><strong id="backRimAngleVal">90</strong>°</span>
+                        </div>
+                        <input type="range" class="form-range" id="backRimAngle" min="90" max="180" step="1" value="90">
+                        <div class="small text-muted">The back matcap is centered on the point behind the sphere. Raise the angle to spread it further around without stretching; use Coverage (&gt;1 when the main Rim angle is 180°) to set how far the patch reaches.</div>
                     </div>
 
                     <div id="backBoundaryControls" class="pt-2 border-top">
@@ -531,6 +543,23 @@
                 </div>
 
                 <div class="settings-area p-3 border rounded bg-light">
+                    <h3>Rim / edge handling</h3>
+                    <fieldset>
+                        <div class="d-flex justify-content-between small text-muted">
+                            <label for="rimAngle" class="form-label mb-0">Rim angle (sphere coverage):</label>
+                            <span><strong id="rimAngleVal">90</strong>°</span>
+                        </div>
+                        <input type="range" class="form-range" id="rimAngle" min="90" max="180" step="1" value="90">
+                        <div class="d-flex justify-content-between small text-muted mt-2">
+                            <label for="rimBlur" class="form-label mb-0">Rim softening:</label>
+                            <span><strong id="rimBlurVal">50</strong>%</span>
+                        </div>
+                        <input type="range" class="form-range" id="rimBlur" min="0" max="100" step="1" value="50">
+                        <div class="small text-muted">90° = classic (rim gets stretched, back is a mirror). 180° = mirror-ball: the matcap wraps the whole sphere, side faces are not smeared.</div>
+                    </fieldset>
+                </div>
+
+                <div class="settings-area p-3 border rounded bg-light">
                     <h3>Animated cubemap</h3>
 
                     <label class="form-label small text-muted mb-1">Rotation axis:</label>
@@ -584,7 +613,7 @@
             </aside>
 
             <main class="app-main" id="appMain">
-                <div class="main-placeholder" id="mainPlaceholder" role="button" tabindex="0">Drop or click to load a base matcap</div>
+                <div class="main-placeholder" id="mainPlaceholder" role="button" tabindex="0">Drop or click to load a base matcap or a .vtf cubemap</div>
 
                 <div id="resultArea" style="display:none">
                     <output id="facesOutput"></output>

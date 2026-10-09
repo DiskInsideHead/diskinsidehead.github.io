@@ -33,6 +33,8 @@ function createEngineCore(post) {
     let baseVer = 0, layerVer = 0;
     let composite = null, compKey = '';
     let pyramid = null;
+    let env = null;
+    let backPyr = null;
 
     let running = null, queued = null;
 
@@ -149,6 +151,15 @@ function createEngineCore(post) {
         return levels;
     }
 
+    function getBackPyramid() {
+        if (!backPyr) {
+            const clamped = buildDiscClamped(back.data, back.w, back.h);
+            backPyr = buildPyramid(clamped, back.w, back.h);
+            backPyr[0] = { data: back.data, w: back.w, h: back.h };
+        }
+        return backPyr;
+    }
+
     function getPyramid() {
         if (!pyramid) {
             const clamped = buildDiscClamped(composite, base.w, base.h);
@@ -185,19 +196,120 @@ function createEngineCore(post) {
         };
     }
 
+    function setEnv(m) {
+        if (!m.faces) { env = null; return; }
+        const levels = {};
+        for (const f of FACES) levels[f] = [{ data: m.faces[f], w: m.size, h: m.size }];
+        env = { size: m.size, levels, built: false };
+    }
+
+    function ensureEnvPyramid() {
+        if (env.built) return;
+        for (const f of FACES) {
+            const l0 = env.levels[f][0];
+            env.levels[f] = buildPyramid(l0.data, l0.w, l0.h);
+        }
+        env.built = true;
+    }
+
+    function sampleEnv(dx, dy, dz, level, out) {
+        const ax = Math.abs(dx), ay = Math.abs(dy), az = Math.abs(dz);
+        let fi;
+        if (ax >= ay && ax >= az) fi = dx > 0 ? 0 : 1;
+        else if (ay >= az) fi = dy > 0 ? 2 : 3;
+        else fi = dz > 0 ? 4 : 5;
+        const bs = BASIS[FACES[fi]];
+        const dc = dx * bs[6] + dy * bs[7] + dz * bs[8];
+        const u = ((dx * bs[0] + dy * bs[1] + dz * bs[2]) / dc + 1) * 0.5;
+        const v = (1 - (dx * bs[3] + dy * bs[4] + dz * bs[5]) / dc) * 0.5;
+        const pyr = env.levels[FACES[fi]];
+        if (level <= 0) sample(pyr[0].data, pyr[0].w, pyr[0].h, u, v, out);
+        else sampleMip(pyr, u, v, level, out);
+    }
+
+    async function generateEnv(size, p, job) {
+        const soft = p.softness;
+        const lod0 = size < env.size ? Math.log2(env.size / size) : 0;
+        if (lod0 > 0 || soft > 0) ensureEnvPyramid();
+        const maxLevel = env.levels.px.length - 1;
+        const rot = makeRotator(p.rx, p.ry, p.rz);
+
+        const cF = new Float64Array(3), cS = new Float64Array(3);
+        const rv = new Float64Array(3);
+        const denom = size - 1;
+        const rowsPerChunk = Math.max(4, (32768 / size) | 0);
+        const faces = {};
+
+        for (const face of FACES) {
+            const bs = BASIS[face];
+            rot(bs[0], bs[1], bs[2], rv); const Ax = rv[0], Ay = rv[1], Az = rv[2];
+            rot(bs[3], bs[4], bs[5], rv); const Bx = rv[0], By = rv[1], Bz = rv[2];
+            rot(bs[6], bs[7], bs[8], rv); const Cx = rv[0], Cy = rv[1], Cz = rv[2];
+
+            const buf = new Uint8ClampedArray(size * size * 4);
+            let off = 0;
+
+            for (let row = 0; row < size; row++) {
+                if (job.final && row > 0 && row % rowsPerChunk === 0) {
+                    await yieldNow();
+                    if (job.aborted) return null;
+                }
+                const b = 1 - 2 * row / denom;
+                const rowX = Bx * b + Cx, rowY = By * b + Cy, rowZ = Bz * b + Cz;
+
+                for (let col = 0; col < size; col++, off += 4) {
+                    const a = -1 + 2 * col / denom;
+                    const il = 1 / Math.sqrt(a * a + b * b + 1);
+                    const dx = (Ax * a + rowX) * il;
+                    const dy = (Ay * a + rowY) * il;
+                    const dz = (Az * a + rowZ) * il;
+
+                    sampleEnv(dx, dy, dz, lod0, cF);
+                    let r = cF[0], g = cF[1], bl = cF[2];
+
+                    if (soft > 0) {
+                        sampleEnv(dx, dy, dz, Math.min(maxLevel, lod0 + soft * maxLevel), cS);
+                        r = r * (1 - soft) + cS[0] * soft;
+                        g = g * (1 - soft) + cS[1] * soft;
+                        bl = bl * (1 - soft) + cS[2] * soft;
+                    }
+
+                    buf[off] = r;
+                    buf[off + 1] = g;
+                    buf[off + 2] = bl;
+                    buf[off + 3] = 255;
+                }
+            }
+            faces[face] = buf;
+        }
+        return faces;
+    }
+
     async function generate(size, p, job) {
+        if (env) return generateEnv(size, p, job);
         ensureComposite(p.layers);
         const src = composite, sw = base.w, sh = base.h;
         const rot = makeRotator(p.rx, p.ry, p.rz);
 
         const mode = (p.backMode === 'matcap' && !back) ? 'blur' : p.backMode;
         const soft = p.softness;
-        const pyr = (mode === 'blur' || soft > 0) ? getPyramid() : null;
+        const rimAng = p.rimAngle || Math.PI / 2;
+        const rimOn = rimAng > Math.PI / 2 + 1e-4;
+        const rimK = (Math.PI / 2) / rimAng;
+        const rimCos = rimOn ? Math.cos(rimAng) : 0;
+        const rimDen = 1 + rimCos;
+        const rimBlur = p.rimBlur === undefined ? 0 : p.rimBlur;
+        const dAng = (Math.PI / 2) / size;
+        const bRimAng = p.backRimAngle || Math.PI / 2;
+        const bRimOn = mode === 'matcap' && bRimAng > Math.PI / 2 + 1e-4;
+        const bRimK = (Math.PI / 2) / bRimAng;
+        const bpyr = bRimOn ? getBackPyramid() : null;
+        const pyr = (mode === 'blur' || soft > 0 || rimOn) ? getPyramid() : null;
         const maxLevel = pyr ? pyr.length - 1 : 0;
 
         const hs = 0.5 / p.scale;
         const bhs = 0.5 / p.backScale;
-        const threshold = -(1 - p.backRadius);
+        const threshold = -(1 - p.backRadius) + rimCos;
         const halfWidth = 0.4 * Math.pow(1 - p.edgeSharp, 2.2) + 0.002;
         const inv2hw = 1 / (2 * halfWidth);
 
@@ -241,8 +353,26 @@ function createEngineCore(post) {
                     const dy = (Ay * a + rowY) * il;
                     const dz = (Az * a + rowZ) * il;
 
-                    const uF = 0.5 - dz * hs, vF = 0.5 - dy * hs;
-                    sampleDisc(src, sw, sh, uF, vF, cF);
+                    let uF, vF;
+                    if (rimOn) {
+                        const rho = Math.sqrt(dy * dy + dz * dz);
+                        const alpha = Math.acos(dx < -1 ? -1 : (dx > 1 ? 1 : dx));
+                        const kA = rimK * alpha;
+                        const rr = Math.sin(kA);
+                        const ux = rho > 1e-6 ? dz / rho : 1, uy = rho > 1e-6 ? dy / rho : 0;
+                        const rs = Math.min(rr / p.scale, 0.995);
+                        uF = 0.5 - 0.5 * rs * ux;
+                        vF = 0.5 - 0.5 * rs * uy;
+                        const tang = 0.5 * (rr / p.scale) / (rho > 1e-6 ? rho : 1e-6) * dAng * sw;
+                        const rad = 0.5 / p.scale * Math.abs(rimK * Math.cos(kA)) * dAng * sw;
+                        const lvl = Math.log2(Math.max(1, tang, rad)) +
+                            2 * rimBlur * Math.log2(1 / Math.max(Math.abs(Math.cos(kA)), 0.03));
+                        if (lvl > 0.01) sampleMip(pyr, uF, vF, lvl, cF);
+                        else sample(src, sw, sh, uF, vF, cF);
+                    } else {
+                        uF = 0.5 - dz * hs; vF = 0.5 - dy * hs;
+                        sampleDisc(src, sw, sh, uF, vF, cF);
+                    }
                     let r = cF[0], g = cF[1], bl = cF[2];
 
                     const raw = (threshold - dx) * inv2hw + 0.5;
@@ -251,7 +381,23 @@ function createEngineCore(post) {
                         let br, bg, bb;
 
                         if (mode === 'matcap') {
-                            sampleDisc(back.data, back.w, back.h, 0.5 + dz * bhs, 0.5 - dy * bhs, cB);
+                            if (bRimOn) {
+                                const rho = Math.sqrt(dy * dy + dz * dz);
+                                const beta = Math.acos(dx > 1 ? -1 : (dx < -1 ? 1 : -dx));
+                                const kB = bRimK * beta;
+                                const rr = Math.sin(kB);
+                                const ux = rho > 1e-6 ? dz / rho : 1, uy = rho > 1e-6 ? dy / rho : 0;
+                                const rs = Math.min(rr / p.backScale, 0.995);
+                                const bu = 0.5 + 0.5 * rs * ux, bv = 0.5 - 0.5 * rs * uy;
+                                const tang = 0.5 * (rr / p.backScale) / (rho > 1e-6 ? rho : 1e-6) * dAng * back.w;
+                                const rad = 0.5 / p.backScale * Math.abs(bRimK * Math.cos(kB)) * dAng * back.w;
+                                const lv = Math.log2(Math.max(1, tang, rad)) +
+                                    2 * rimBlur * Math.log2(1 / Math.max(Math.abs(Math.cos(kB)), 0.03));
+                                if (lv > 0.01) sampleMip(bpyr, bu, bv, lv, cB);
+                                else sample(back.data, back.w, back.h, bu, bv, cB);
+                            } else {
+                                sampleDisc(back.data, back.w, back.h, 0.5 + dz * bhs, 0.5 - dy * bhs, cB);
+                            }
                             br = cB[0]; bg = cB[1]; bb = cB[2];
                         } else if (mode === 'gradient') {
                             let dn = (dx + 1) / gRange;
@@ -267,7 +413,7 @@ function createEngineCore(post) {
                             bg = g * (1 - sA) + sG;
                             bb = bl * (1 - sA) + sB;
                         } else {
-                            const bt = smooth(-dx);
+                            const bt = rimDen > 1e-3 ? smooth((rimCos - dx) / rimDen) : 0;
                             sampleMip(pyr, uF, vF, Math.pow(bt, 1.3) * maxLevel, cB);
                             br = cB[0]; bg = cB[1]; bb = cB[2];
                         }
@@ -329,9 +475,14 @@ function createEngineCore(post) {
                 case 'setBack':
                     if (running) running.aborted = true;
                     back = m.data ? { data: m.data, w: m.w, h: m.h } : null;
+                    backPyr = null;
+                    break;
+                case 'setEnv':
+                    if (running) running.aborted = true;
+                    setEnv(m);
                     break;
                 case 'render':
-                    if (!base) return;
+                    if (!base && !env) return;
                     queued = m;
                     if (running && running.final) running.aborted = true;
                     startNext();
@@ -358,6 +509,8 @@ const engine = (() => {
 })();
 
 let baseReady = false, srcW = 0, srcH = 0;
+let envState = null;
+let sourceVer = 0;
 let generatedFaces = null, generatedSize = 0;
 let backBmp = null;
 let isBallDragging = false;
@@ -588,7 +741,7 @@ function createFitPanel({ getBitmap, onChange }) {
     };
 }
 
-function createSlot({ caption = '', large = false, clearable = false, onFile, onClear }) {
+function createSlot({ caption = '', large = false, clearable = false, accept = 'image/*', onFile, onClear }) {
     const wrap = document.createElement('div');
     wrap.className = 'slot-wrap';
     wrap.innerHTML = `
@@ -597,7 +750,7 @@ function createSlot({ caption = '', large = false, clearable = false, onFile, on
             ${clearable ? '<button type="button" class="slot-clear" title="Remove" aria-label="Remove">×</button>' : ''}
         </div>
         ${caption ? `<div class="slot-caption">${caption}</div>` : ''}
-        <input type="file" hidden accept="image/*">`;
+        <input type="file" hidden accept="${accept}">`;
 
     const slotEl = wrap.querySelector('.slot');
     const ctx = wrap.querySelector('canvas').getContext('2d');
@@ -657,7 +810,7 @@ function createSlot({ caption = '', large = false, clearable = false, onFile, on
 
 let baseSeq = 0;
 let baseBmp = null;
-const baseSlot = createSlot({ large: true, onFile: loadBase });
+const baseSlot = createSlot({ large: true, clearable: true, accept: 'image/*,.vtf', onFile: loadBase, onClear: () => clearBase() });
 baseSlotHost.appendChild(baseSlot.el);
 
 const baseFit = createFitPanel({
@@ -667,11 +820,13 @@ const baseFit = createFitPanel({
 document.getElementById('baseFitHost').appendChild(baseFit.el);
 
 async function loadBase(file) {
+    if (isVtfFile(file)) return loadEnvVtf(file);
     const seq = ++baseSeq;
     const bmp = await decodeImage(file);
     if (!bmp) return;
     if (seq !== baseSeq) { closeBmp(bmp); return; }
 
+    if (envState) clearEnv();
     closeBmp(baseBmp);
     baseBmp = bmp;
     baseFit.autoFit(bmp);
@@ -683,6 +838,7 @@ async function loadBase(file) {
 
 function applyBase(draft) {
     if (!baseBmp) return;
+    sourceVer++;
     const fit = baseFit.fit;
     const size = fitOutSize(baseBmp, fit);
     const px = rasterize(normalizeMatcap(baseBmp, fit, size), size, size);
@@ -732,6 +888,7 @@ async function loadBackMatcap(file) {
 
 function applyBack(draft) {
     if (!backBmp) return;
+    sourceVer++;
     const size = fitOutSize(backBmp, backFit.fit);
     const px = rasterize(normalizeMatcap(backBmp, backFit.fit, size), size, size);
     engine.send({ type: 'setBack', data: px, w: size, h: size }, [px.buffer]);
@@ -740,6 +897,7 @@ function applyBack(draft) {
 }
 
 function clearBackMatcap() {
+    sourceVer++;
     closeBmp(backBmp);
     backBmp = null;
     engine.send({ type: 'setBack', data: null });
@@ -817,6 +975,7 @@ const layers = [];
 let nextLayerId = 1;
 
 function rebuildCache(layer) {
+    sourceVer++;
     if (layer.matcap && baseReady) {
         const px = rasterize(normalizeMatcap(layer.matcap, layer.fitPanel.fit, srcW), srcW, srcH);
         layer.hasPx = true;
@@ -993,8 +1152,6 @@ appMain.addEventListener('drop', e => {
 window.addEventListener('dragover', e => e.preventDefault());
 window.addEventListener('drop', e => e.preventDefault());
 
-addLayer();
-
 function setupInteractiveSlider(id, valId, formatFn = v => v) {
     const input = document.getElementById(id);
     const valSpan = document.getElementById(valId);
@@ -1021,11 +1178,14 @@ if (rotXEl && rotYEl) {
 
 setupInteractiveSlider('matcapScale', 'matcapScaleVal', v => v.toFixed(2));
 setupInteractiveSlider('backMatcapScale', 'backMatcapScaleVal', v => v.toFixed(2));
+setupInteractiveSlider('backRimAngle', 'backRimAngleVal', v => Math.round(v));
 setupInteractiveSlider('gradInnerRadius', 'gradInnerRadiusVal', v => Math.round(v));
 setupInteractiveSlider('gradSharpness', 'gradSharpnessVal', v => Math.round(v));
 setupInteractiveSlider('backRadius', 'backRadiusVal', v => v.toFixed(2));
 setupInteractiveSlider('backEdgeSharpness', 'backEdgeSharpnessVal', v => Math.round(v));
 setupInteractiveSlider('globalSoftness', 'globalSoftnessVal', v => Math.round(v));
+setupInteractiveSlider('rimAngle', 'rimAngleVal', v => Math.round(v));
+setupInteractiveSlider('rimBlur', 'rimBlurVal', v => Math.round(v));
 
 function updateHandlePosition(pitchDeg, yawDeg) {
     if (!ballController || !ballHandle) return;
@@ -1145,6 +1305,9 @@ function collectParams() {
         backMode: getBackFillMode(),
         softness: getGlobalSoftness(),
         scale: getMatcapScale(),
+        rimAngle: readNum('rimAngle', 90) * Math.PI / 180,
+        rimBlur: readNum('rimBlur', 50, 100),
+        backRimAngle: readNum('backRimAngle', 90) * Math.PI / 180,
         backScale: getBackMatcapScale(),
         backRadius: getBackRadius(),
         edgeSharp: getBackEdgeSharpness(),
@@ -1196,10 +1359,8 @@ function handleEngineMessage(m) {
     if (m.final) {
         generatedFaces = m.faces;
         generatedSize = m.size;
-        if (baseBmp) {
-            const cv = normalizeMatcap(baseBmp, baseFit.fit, m.size);
-            generatedFaces.sphere = cv.getContext('2d').getImageData(0, 0, m.size, m.size).data;
-        }
+        const sp = getSpherePixels(m.size);
+        if (sp) generatedFaces.sphere = sp;
     }
     renderPreview(m.faces, m.size);
 }
@@ -1216,6 +1377,11 @@ function renderPreview(faces, size) {
     resultArea.style.display = 'block';
     const placeholder = document.getElementById('mainPlaceholder');
     if (placeholder) placeholder.style.display = 'none';
+
+    if (!baseBmp) {
+        const oldMc = holder.querySelector('.face-cell[data-face="matcap"]');
+        if (oldMc) oldMc.remove();
+    }
 
     if (baseBmp) {
         let mc = holder.querySelector('.face-cell[data-face="matcap"] canvas');
@@ -1571,6 +1737,272 @@ function getFlipRows() {
     return checked ? checked.value === 'true' : false;
 }
 
+const VTF_FMT_NAMES = {
+    0: 'RGBA8888', 1: 'ABGR8888', 2: 'RGB888', 3: 'BGR888', 4: 'RGB565', 5: 'I8', 6: 'IA88',
+    11: 'ARGB8888', 12: 'BGRA8888', 13: 'DXT1', 14: 'DXT3', 15: 'DXT5', 16: 'BGRX8888',
+    17: 'BGR565', 20: 'DXT1', 24: 'RGBA16161616F', 25: 'RGBA16161616'
+};
+const VTF_BPP = {
+    0: 4, 1: 4, 2: 3, 3: 3, 4: 2, 5: 1, 6: 2, 8: 1, 11: 4, 12: 4, 16: 4, 17: 2,
+    18: 2, 19: 2, 21: 2, 22: 2, 23: 4, 24: 8, 25: 8, 26: 4
+};
+
+function isVtfFile(f) { return !!f && /\.vtf$/i.test(f.name); }
+
+function halfToFloat(h) {
+    const s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 0x1f, m = h & 0x3ff;
+    if (e === 0) return s * Math.pow(2, -14) * (m / 1024);
+    if (e === 31) return m ? NaN : s * Infinity;
+    return s * Math.pow(2, e - 15) * (1 + m / 1024);
+}
+
+function vtfMipSize(w, h, fmt) {
+    w = Math.max(1, w); h = Math.max(1, h);
+    if (fmt === 13 || fmt === 20) return ((w + 3) >> 2) * ((h + 3) >> 2) * 8;
+    if (fmt === 14 || fmt === 15) return ((w + 3) >> 2) * ((h + 3) >> 2) * 16;
+    const b = VTF_BPP[fmt];
+    if (!b) throw new Error('Unsupported VTF pixel format (' + fmt + ')');
+    return w * h * b;
+}
+
+function decodeVTFImage(dv, off, w, h, fmt) {
+    const out = new Uint8ClampedArray(w * h * 4);
+
+    if (fmt === 13 || fmt === 20 || fmt === 14 || fmt === 15) {
+        const bb = (fmt === 14 || fmt === 15) ? 16 : 8;
+        const bw = (w + 3) >> 2, bh = (h + 3) >> 2;
+        const pal = [null, null, null, null];
+        for (let by = 0; by < bh; by++) {
+            for (let bx = 0; bx < bw; bx++) {
+                const co = off + (by * bw + bx) * bb + (bb === 16 ? 8 : 0);
+                const c0 = dv.getUint16(co, true), c1 = dv.getUint16(co + 2, true);
+                const p0 = unpack565(c0), p1 = unpack565(c1);
+                pal[0] = p0; pal[1] = p1;
+                if (bb === 16 || c0 > c1) {
+                    pal[2] = p0.map((v, i) => (2 * v + p1[i]) / 3);
+                    pal[3] = p0.map((v, i) => (v + 2 * p1[i]) / 3);
+                } else {
+                    pal[2] = p0.map((v, i) => (v + p1[i]) / 2);
+                    pal[3] = [0, 0, 0];
+                }
+                const bits = dv.getUint32(co + 4, true);
+                for (let k = 0; k < 16; k++) {
+                    const x = bx * 4 + (k & 3), y = by * 4 + (k >> 2);
+                    if (x >= w || y >= h) continue;
+                    const c = pal[(bits >>> (2 * k)) & 3];
+                    const o = (y * w + x) * 4;
+                    out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2]; out[o + 3] = 255;
+                }
+            }
+        }
+        return out;
+    }
+
+    const n = w * h;
+    const f01 = v => (v > 0 ? (v < 1 ? v * 255 : 255) : 0);
+    for (let i = 0, o = 0; i < n; i++, o += 4) {
+        let r, g, b;
+        switch (fmt) {
+            case 0:  r = dv.getUint8(off); g = dv.getUint8(off + 1); b = dv.getUint8(off + 2); off += 4; break;
+            case 1:  b = dv.getUint8(off + 1); g = dv.getUint8(off + 2); r = dv.getUint8(off + 3); off += 4; break;
+            case 2:  r = dv.getUint8(off); g = dv.getUint8(off + 1); b = dv.getUint8(off + 2); off += 3; break;
+            case 3:  b = dv.getUint8(off); g = dv.getUint8(off + 1); r = dv.getUint8(off + 2); off += 3; break;
+            case 4:  { const c = unpack565(dv.getUint16(off, true)); r = c[0]; g = c[1]; b = c[2]; off += 2; break; }
+            case 17: { const c = unpack565(dv.getUint16(off, true)); r = c[2]; g = c[1]; b = c[0]; off += 2; break; }
+            case 5:  r = g = b = dv.getUint8(off); off += 1; break;
+            case 6:  r = g = b = dv.getUint8(off); off += 2; break;
+            case 11: r = dv.getUint8(off + 1); g = dv.getUint8(off + 2); b = dv.getUint8(off + 3); off += 4; break;
+            case 12:
+            case 16: b = dv.getUint8(off); g = dv.getUint8(off + 1); r = dv.getUint8(off + 2); off += 4; break;
+            case 24:
+                r = f01(halfToFloat(dv.getUint16(off, true)));
+                g = f01(halfToFloat(dv.getUint16(off + 2, true)));
+                b = f01(halfToFloat(dv.getUint16(off + 4, true)));
+                off += 8; break;
+            case 25:
+                r = dv.getUint16(off, true) >> 8; g = dv.getUint16(off + 2, true) >> 8; b = dv.getUint16(off + 4, true) >> 8;
+                off += 8; break;
+            default: throw new Error('Unsupported VTF pixel format (' + fmt + ')');
+        }
+        out[o] = r; out[o + 1] = g; out[o + 2] = b; out[o + 3] = 255;
+    }
+    return out;
+}
+
+function parseVTFCubemap(buf) {
+    if (buf.byteLength < 64) throw new Error('File is too small');
+    const dv = new DataView(buf);
+    if (dv.getUint32(0, true) !== 0x00465456) throw new Error('Not a VTF file');
+    const major = dv.getUint32(4, true), minor = dv.getUint32(8, true);
+    if (major !== 7) throw new Error('Unsupported VTF version ' + major + '.' + minor);
+
+    const headerSize = dv.getUint32(12, true);
+    const w = dv.getUint16(16, true), h = dv.getUint16(18, true);
+    const flags = dv.getUint32(20, true);
+    const frames = Math.max(1, dv.getUint16(24, true));
+    const firstFrame = dv.getUint16(26, true);
+    const fmt = dv.getInt32(52, true);
+    const mips = Math.max(1, dv.getUint8(56));
+    const lowFmt = dv.getInt32(57, true);
+    const lowW = dv.getUint8(61), lowH = dv.getUint8(62);
+
+    if (!(flags & 0x4000)) throw new Error('This VTF is not a cubemap (no ENVMAP flag)');
+    if (w !== h || !w) throw new Error('Cubemap faces must be square');
+
+    const faceCount = (minor >= 5 || firstFrame === 0xffff) ? 6 : 7;
+
+    let dataOff = headerSize, viaRes = false;
+    if (minor >= 3 && buf.byteLength >= 80) {
+        const nres = dv.getUint32(68, true);
+        for (let i = 0; i < nres; i++) {
+            const eo = 80 + i * 8;
+            if (eo + 8 > buf.byteLength) break;
+            if (dv.getUint8(eo) === 0x30 && dv.getUint8(eo + 1) === 0 && dv.getUint8(eo + 2) === 0) {
+                dataOff = dv.getUint32(eo + 4, true);
+                viaRes = true;
+                break;
+            }
+        }
+    }
+    if (!viaRes && lowFmt >= 0 && lowW && lowH) dataOff += vtfMipSize(lowW, lowH, lowFmt);
+
+    let off = dataOff;
+    for (let m = mips - 1; m >= 1; m--) {
+        off += vtfMipSize(Math.max(1, w >> m), Math.max(1, h >> m), fmt) * frames * faceCount;
+    }
+    const faceBytes = vtfMipSize(w, h, fmt);
+    if (off + faceBytes * faceCount > buf.byteLength) throw new Error('VTF data is truncated');
+
+    const faces = {};
+    FACES.forEach((f, i) => { faces[f] = decodeVTFImage(dv, off + i * faceBytes, w, h, fmt); });
+    return { size: w, frames, fmt, hdr: fmt === 24 || fmt === 25, faces };
+}
+
+const envOffEls = [
+    document.querySelector('.section-title'),
+    layersContainer,
+    addLayerBtn,
+    document.querySelector('input[name="backFill"]').closest('fieldset'),
+    document.getElementById('backColorArea'),
+    document.getElementById('backGradientArea'),
+    document.getElementById('backMatcapArea'),
+    document.getElementById('backBoundaryControls'),
+    document.getElementById('matcapScale').closest('.settings-area'),
+    document.getElementById('rimAngle').closest('.settings-area')
+].filter(Boolean);
+
+function setEnvUI(on) {
+    envOffEls.forEach(el => el.classList.toggle('env-off', on));
+    const fitHost = document.getElementById('baseFitHost');
+    if (fitHost) fitHost.hidden = on;
+}
+
+function clearBase() {
+    if (animBusy) return;
+    baseSeq++;
+    clearTimeout(renderTimer);
+    shownSeq = ++renderSeq;
+
+    if (envState) clearEnv(); else setEnvUI(false);
+    closeBmp(baseBmp);
+    baseBmp = null;
+    baseReady = false;
+    generatedFaces = null;
+    generatedSize = 0;
+    sourceVer++;
+
+    baseSlot.clear();
+    baseInfo.hidden = true;
+    baseName.textContent = '';
+    baseDims.textContent = '';
+
+    document.getElementById('facesOutput').innerHTML = '';
+    resultArea.style.display = 'none';
+    mainPlaceholder.style.display = '';
+
+    generateBtn.disabled = true;
+    ['dlAnimPack', 'dlAnimHdr'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.disabled = true;
+    });
+}
+
+document.getElementById('clearBaseBtn').addEventListener('click', clearBase);
+
+function clearEnv() {
+    envState = null;
+    sourceVer++;
+    engine.send({ type: 'setEnv', faces: null });
+    setEnvUI(false);
+}
+
+async function loadEnvVtf(file) {
+    const seq = ++baseSeq;
+    let info;
+    try {
+        info = parseVTFCubemap(await file.arrayBuffer());
+    } catch (err) {
+        console.error(err);
+        alert('Cannot load VTF: ' + (err && err.message ? err.message : err));
+        return;
+    }
+    if (seq !== baseSeq) return;
+
+    closeBmp(baseBmp);
+    baseBmp = null;
+    baseSlot.clear();
+    envState = { size: info.size, raw: info.faces };
+
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = info.size;
+    cv.getContext('2d').putImageData(new ImageData(info.faces.pz, info.size, info.size), 0, 0);
+    baseSlot.setPreview(cv, null);
+
+    baseName.textContent = file.name;
+    baseDims.textContent = `VTF cubemap ${info.size} × ${info.size} · ${VTF_FMT_NAMES[info.fmt] || info.fmt}` +
+        (info.frames > 1 ? ` · ${info.frames} frames (using frame 1)` : '') +
+        (info.hdr ? ' · HDR clamped to 0..1' : '');
+    baseInfo.hidden = false;
+    setEnvUI(true);
+
+    const radio = document.getElementById('size-' + info.size);
+    if (radio) radio.checked = true;
+
+    applyEnv(false);
+}
+
+function applyEnv(draft) {
+    if (!envState) return;
+    sourceVer++;
+    const size = envState.size, flip = getFlipRows();
+    const faces = {}, transfer = [];
+    for (const f of FACES) {
+        const px = flip ? flipFaceRows(envState.raw[f], size) : new Uint8ClampedArray(envState.raw[f]);
+        faces[f] = px;
+        transfer.push(px.buffer);
+    }
+    engine.send({ type: 'setEnv', faces, size }, transfer);
+
+    srcW = srcH = size;
+    baseReady = true;
+    generateBtn.disabled = false;
+    ['dlAnimPack', 'dlAnimHdr'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.disabled = false;
+    });
+    triggerRender(draft);
+}
+
+document.querySelectorAll('input[name="flipRows"]').forEach(input => {
+    input.addEventListener('change', () => { if (envState) applyEnv(false); });
+});
+
+function getSpherePixels(size) {
+    if (!baseBmp) return null;
+    const cv = normalizeMatcap(baseBmp, baseFit.fit, size);
+    return cv.getContext('2d').getImageData(0, 0, size, size).data;
+}
+
 function crc32(buf) {
     let c, table = crc32.table || (crc32.table = (() => {
         const t = [];
@@ -1670,10 +2102,8 @@ async function getFacesAt(size) {
     if (size <= generatedSize) return scaleFacesDown(generatedFaces, generatedSize, size);
     exportRendered = true;
     const res = await renderFrameAsync(size, collectParams());
-    if (baseBmp) {
-        const cv = normalizeMatcap(baseBmp, baseFit.fit, size);
-        res.faces.sphere = cv.getContext('2d').getImageData(0, 0, size, size).data;
-    }
+    const sp = getSpherePixels(size);
+    if (sp) res.faces.sphere = sp;
     return res.faces;
 }
 
@@ -1881,16 +2311,12 @@ Proxies
 
     async function getOrRenderFrames(N, size, axis, dir) {
         const basePars = collectParams();
-        const cfgKey = `${N}|${size}|${axis}|${dir}|${JSON.stringify(basePars)}`;
+        const cfgKey = `${sourceVer}|${N}|${size}|${axis}|${dir}|${JSON.stringify(basePars)}`;
         if (animCache && animCache.key === cfgKey) {
             return animCache.frames;
         }
 
-        let sphere = null;
-        if (baseBmp) {
-            const cv = normalizeMatcap(baseBmp, baseFit.fit, size);
-            sphere = cv.getContext('2d').getImageData(0, 0, size, size).data;
-        }
+        const sphere = getSpherePixels(size);
 
         const frames = [];
         for (let i = 0; i < N; i++) {
