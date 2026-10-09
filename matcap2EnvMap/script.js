@@ -183,16 +183,62 @@ function createEngineCore(post) {
         out[2] = mipA[2] * (1 - t) + mipB[2] * t;
     }
 
-    function makeRotator(rx, ry, rz) {
+    function makeRotator(pOrRx, ry, rz, gyaw, gpitch) {
+        const p = (typeof pOrRx === 'object' && pOrRx !== null) ? pOrRx : {
+            rx: pOrRx, ry: ry, rz: rz, gridYaw: gyaw, gridPitch: gpitch
+        };
+        const rx = p.rx || 0, ry_val = p.ry || 0, rz_val = p.rz || 0;
         const cx = Math.cos(rx), sx = Math.sin(rx);
-        const cy = Math.cos(ry), sy = Math.sin(ry);
-        const cz = Math.cos(rz), sz = Math.sin(rz);
-        return (x, y, z, out) => {
+        const cy = Math.cos(ry_val), sy = Math.sin(ry_val);
+        const cz = Math.cos(rz_val), sz = Math.sin(rz_val);
+
+        function applyTexture(x, y, z, out) {
             const y1 = y * cx - z * sx, z1 = y * sx + z * cx;
             const x2 = x * cy + z1 * sy, z2 = -x * sy + z1 * cy;
             out[0] = x2 * cz - y1 * sz;
             out[1] = x2 * sz + y1 * cz;
             out[2] = z2;
+        }
+
+        if (p.gridYaw !== undefined || p.gridPitch !== undefined) {
+            const gcz = Math.cos(p.gridYaw || 0), gsz = Math.sin(p.gridYaw || 0);
+            const gcy = Math.cos(p.gridPitch || 0), gsy = Math.sin(p.gridPitch || 0);
+            return (x, y, z, out) => {
+                const ax = x * gcz - y * gsz, ay = x * gsz + y * gcz, az = z;
+                const bx = ax * gcy + az * gsy;
+                const bz = -ax * gsy + az * gcy;
+                const by = ay;
+                applyTexture(bx, bz, -by, out);
+            };
+        }
+
+        if (p.animAxis) {
+            const ang = p.animAngle || 0;
+            const ca = Math.cos(ang), sa = Math.sin(ang);
+            return (x, y, z, out) => {
+                let wx = x, wy = y, wz = z;
+                if (p.animAxis === 'y') {
+                    wx = x * ca - y * sa;
+                    wy = x * sa + y * ca;
+                } else if (p.animAxis === 'x') {
+                    wx = x * ca + z * sa;
+                    wz = -x * sa + z * ca;
+                } else if (p.animAxis === 'z') {
+                    wy = y * ca - z * sa;
+                    wz = y * sa + z * ca;
+                }
+                applyTexture(wx, wz, -wy, out);
+            };
+        }
+
+        if (p.forExport) {
+            return (x, y, z, out) => {
+                applyTexture(x, z, -y, out);
+            };
+        }
+
+        return (x, y, z, out) => {
+            applyTexture(x, y, z, out);
         };
     }
 
@@ -232,7 +278,7 @@ function createEngineCore(post) {
         const lod0 = size < env.size ? Math.log2(env.size / size) : 0;
         if (lod0 > 0 || soft > 0) ensureEnvPyramid();
         const maxLevel = env.levels.px.length - 1;
-        const rot = makeRotator(p.rx, p.ry, p.rz);
+        const rot = makeRotator(p);
 
         const cF = new Float64Array(3), cS = new Float64Array(3);
         const rv = new Float64Array(3);
@@ -289,7 +335,7 @@ function createEngineCore(post) {
         if (env) return generateEnv(size, p, job);
         ensureComposite(p.layers);
         const src = composite, sw = base.w, sh = base.h;
-        const rot = makeRotator(p.rx, p.ry, p.rz);
+        const rot = makeRotator(p);
 
         const mode = (p.backMode === 'matcap' && !back) ? 'blur' : p.backMode;
         const soft = p.softness;
@@ -665,7 +711,7 @@ function detectDisc(bmp) {
         }
         let x0 = -1, x1 = -1, y0 = -1, y1 = -1;
         for (let x = 0; x < w; x++) if (colCnt[x] >= 2) { if (x0 < 0) x0 = x; x1 = x; }
-        for (let y = 0; y < h; y++) if (rowCnt[y] >= 2) { if (y0 < 0) y0 = y; y1 = y; }
+        for (let y = 0; y < h; y++) if (rowCnt[y] >= 2) { if (y0 < 0) y0 = y; y1 = x; }
         if (x0 < 0 || y0 < 0) break;
 
         const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
@@ -1297,11 +1343,15 @@ function getRotations() {
     return { rx, ry, rz };
 }
 
-function collectParams() {
+// Standard Source cubemap orientation: applied on export only, preview stays unrotated
+const EXPORT_RX = -90 * Math.PI / 180;
+
+function collectParams(forExport) {
     const { rx, ry, rz } = getRotations();
     const c = colorState;
     return {
         rx, ry, rz,
+        forExport: !!forExport,
         backMode: getBackFillMode(),
         softness: getGlobalSoftness(),
         scale: getMatcapScale(),
@@ -2099,9 +2149,8 @@ function download(data, filename, mime) {
 let exportRendered = false;
 
 async function getFacesAt(size) {
-    if (size <= generatedSize) return scaleFacesDown(generatedFaces, generatedSize, size);
     exportRendered = true;
-    const res = await renderFrameAsync(size, collectParams());
+    const res = await renderFrameAsync(size, collectParams(true));
     const sp = getSpherePixels(size);
     if (sp) res.faces.sphere = sp;
     return res.faces;
@@ -2238,7 +2287,22 @@ function renderFrameAsync(size, p) {
     });
 }
 
-function animVmtSnippet(envPath, frames) {
+function animVmtSnippet(envPath, frames, grid) {
+    if (grid) return `// Add to your VMT (keep your other parameters and proxies):
+"$envmap" "${envPath}"
+"$envmapframe" 0
+
+Proxies
+{
+    dih_envmapcamera360
+    {
+        "offset" "0"
+        "frames" "${grid.yawN}"
+        "pitchframes" "${grid.pitchN}"
+        "pitchmax" "${grid.pitchMax}"
+    }
+}
+`;
     return `// Add to your VMT (keep your other parameters and proxies):
 "$envmap" "${envPath}"
 "$envmapframe" 0
@@ -2273,29 +2337,55 @@ Proxies
 
     const FRAME_STEPS = [4, 5, 6, 8, 9, 10, 12, 15, 18, 20, 24, 30, 36, 40, 45, 60, 72, 90, 120, 180, 360];
     const readFrames = () => FRAME_STEPS[Math.max(0, Math.min(FRAME_STEPS.length - 1, parseInt(framesInput.value, 10) || 0))];
+    const gridCfg = () => ({
+        pitchN: Math.max(1, Math.min(45, parseInt(document.getElementById('animPitchFrames')?.value, 10) || 1)),
+        pitchMax: Math.max(1, Math.min(89, parseFloat(document.getElementById('animPitchMax')?.value) || 60)),
+        invert: !!document.getElementById('animPitchInvert')?.checked
+    });
+    const totalFrames = () => {
+        const N = readFrames();
+        return getAnimAxis() === 'grid' ? N * gridCfg().pitchN : N;
+    };
     const getAnimAxis = () => {
         const checked = document.querySelector('input[name="animAxis"]:checked');
         return checked ? checked.value : 'y';
     };
 
     const updateStep = () => {
-        const N = readFrames();
+        const Nyaw = readFrames();
+        const N = totalFrames();
         const perFrame = size => faceByteSize(size, 'RGBA16161616F') * 7 * 4 / 3;
         const ldrSize = Math.min(getFaceSize(), 256);
         const hdrSize = Math.min(getHdrFaceSize(), 256);
         let bytes = N * faceByteSize(ldrSize, getPixelFormat()) * 7 * 4 / 3;
         if (!includeHdrCheckbox || includeHdrCheckbox.checked) bytes += N * perFrame(hdrSize);
-        framesVal.textContent = N;
-        stepLabel.textContent = `${(360 / N).toFixed(1).replace(/\.0$/, '')}°/frame, ~${(bytes / 1048576).toFixed(1)} MB`;
+        framesVal.textContent = Nyaw;
+        const stepTxt = `${(360 / Nyaw).toFixed(1).replace(/\.0$/, '')}°/frame`;
+        stepLabel.textContent = (getAnimAxis() === 'grid' ? `${stepTxt}, ${N} total, ` : `${stepTxt}, `) + `~${(bytes / 1048576).toFixed(1)} MB`;
     };
     framesInput.addEventListener('input', updateStep);
     document.querySelectorAll('input[name="faceSize"], input[name="hdrFaceSize"], input[name="pixelFormat"], #animIncludeHdr')
         .forEach(el => el.addEventListener('change', updateStep));
     updateStep();
 
+    const gridOpts = document.getElementById('animGridOpts');
+    const refreshGridUi = () => {
+        const g = gridCfg();
+        const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+        set('animPitchMaxVal', g.pitchMax);
+        set('animPitchFramesVal', g.pitchN);
+        const step = g.pitchN > 1 ? (2 * g.pitchMax / (g.pitchN - 1)) : 0;
+        set('animPitchInfo', `−${g.pitchMax}° … +${g.pitchMax}°, step ${step.toFixed(1).replace(/\.0$/, '')}°`);
+        if (gridOpts) gridOpts.style.display = getAnimAxis() === 'grid' ? '' : 'none';
+    };
     document.querySelectorAll('input[name="animAxis"]').forEach(r => {
-        r.addEventListener('change', () => { animCache = null; });
+        r.addEventListener('change', () => { animCache = null; refreshGridUi(); updateStep(); });
     });
+    ['animPitchFrames', 'animPitchMax', 'animPitchInvert'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', () => { animCache = null; refreshGridUi(); updateStep(); });
+    });
+    refreshGridUi();
     if (reverse) reverse.addEventListener('change', () => { animCache = null; });
 
     const setBusy = busy => {
@@ -2310,8 +2400,9 @@ Proxies
     }
 
     async function getOrRenderFrames(N, size, axis, dir) {
-        const basePars = collectParams();
-        const cfgKey = `${sourceVer}|${N}|${size}|${axis}|${dir}|${JSON.stringify(basePars)}`;
+        const basePars = collectParams(true);
+        const grid = axis === 'grid' ? gridCfg() : null;
+        const cfgKey = `${sourceVer}|${N}|${size}|${axis}|${dir}|${grid ? JSON.stringify(grid) : ''}|${JSON.stringify(basePars)}`;
         if (animCache && animCache.key === cfgKey) {
             return animCache.frames;
         }
@@ -2319,16 +2410,23 @@ Proxies
         const sphere = getSpherePixels(size);
 
         const frames = [];
-        for (let i = 0; i < N; i++) {
-            status.textContent = `Rendering frame ${i + 1} / ${N}…`;
-            const angleOffset = dir * i * 2 * Math.PI / N;
+        const pN = grid ? grid.pitchN : 1;
+        const total = N * pN;
+        for (let k = 0; k < total; k++) {
+            status.textContent = `Rendering frame ${k + 1} / ${total}…`;
             const p = Object.assign({}, basePars);
-            if (axis === 'x') {
-                p.rx = basePars.rx + angleOffset;
-            } else if (axis === 'z') {
-                p.rz = basePars.rz + angleOffset;
+            const yi = k % N;
+            const angleOffset = dir * yi * 2 * Math.PI / N;
+            if (grid) {
+                // frame = pitchIdx * N + yawIdx
+                const pj = Math.floor(k / N);
+                const pitchDeg = pN === 1 ? 0 : -grid.pitchMax + pj * (2 * grid.pitchMax) / (pN - 1);
+                // camera yaw/pitch (Source: +pitch = look down); rotator gets the inverse
+                p.gridYaw = angleOffset;
+                p.gridPitch = (grid.invert ? 1 : -1) * pitchDeg * Math.PI / 180;
             } else {
-                p.ry = basePars.ry + angleOffset;
+                p.animAxis = axis;
+                p.animAngle = angleOffset;
             }
 
             const res = await renderFrameAsync(size, p);
@@ -2368,7 +2466,7 @@ Proxies
             const vtfName = last + '_envanim.vtf';
             const files = [{ name: vtfName, data: vtf }];
             if (!includeExamplesCheckbox || includeExamplesCheckbox.checked) {
-                files.push({ name: 'vmt_snippet.txt', data: new TextEncoder().encode(animVmtSnippet(matPath + '_envanim', N)) });
+                files.push({ name: 'vmt_snippet.txt', data: new TextEncoder().encode(animVmtSnippet(matPath + '_envanim', N, axis === 'grid' ? { yawN: N, pitchN: gridCfg().pitchN, pitchMax: gridCfg().pitchMax } : null)) });
             }
 
             let hdrInfo = '';
@@ -2384,7 +2482,7 @@ Proxies
             status.textContent = 'Zipping files…';
             await new Promise(r => setTimeout(r, 0));
             download(buildZip(files), last + '_envanim_pack.zip', 'application/zip');
-            status.textContent = `Done: ${N} frames (${axis.toUpperCase()}), LDR (${ldrSize}px, ${(vtf.length / 1048576).toFixed(2)} MB)${hdrInfo}`;
+            status.textContent = `Done: ${ldrFrames.length} frames (${axis.toUpperCase()}), LDR (${ldrSize}px, ${(vtf.length / 1048576).toFixed(2)} MB)${hdrInfo}`;
         } catch (err) {
             console.error(err);
             status.textContent = 'Failed: ' + (err && err.message ? err.message : err);
@@ -2415,7 +2513,7 @@ Proxies
                 const matPath = getMatPath();
                 const last = matPath.split('/').pop();
                 download(vtfHdr, last + '_envanim.hdr.vtf', 'application/octet-stream');
-                status.textContent = `Done: HDR downloaded (${N} frames, ${hdrSize}px, ${(vtfHdr.length / 1048576).toFixed(2)} MB)`;
+                status.textContent = `Done: HDR downloaded (${rawFrames.length} frames, ${hdrSize}px, ${(vtfHdr.length / 1048576).toFixed(2)} MB)`;
             } catch (err) {
                 console.error(err);
                 status.textContent = 'Failed: ' + (err && err.message ? err.message : err);

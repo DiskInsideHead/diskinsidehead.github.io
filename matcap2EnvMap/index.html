@@ -563,14 +563,37 @@
 
                     <label class="form-label small text-muted mb-1">Rotation axis:</label>
                     <div class="btn-group w-100 mb-2" role="group">
-                        <input class="btn-check" id="anim-axis-y" name="animAxis" type="radio" value="y">
+                        <input checked class="btn-check" id="anim-axis-y" name="animAxis" type="radio" value="y">
                         <label class="btn btn-outline-primary btn-sm" for="anim-axis-y">Yaw (Y)</label>
-
+                        <!--
                         <input class="btn-check" id="anim-axis-x" name="animAxis" type="radio" value="x">
                         <label class="btn btn-outline-primary btn-sm" for="anim-axis-x">Pitch (X)</label>
 
-                        <input checked class="btn-check" id="anim-axis-z" name="animAxis" type="radio" value="z">
+                        <input class="btn-check" id="anim-axis-z" name="animAxis" type="radio" value="z">
                         <label class="btn btn-outline-primary btn-sm" for="anim-axis-z">Roll (Z)</label>
+                        -->
+                        <input class="btn-check" id="anim-axis-grid" name="animAxis" type="radio" value="grid">
+                        <label class="btn btn-outline-primary btn-sm" for="anim-axis-grid">Yaw+Pitch</label>
+                    </div>
+
+                    <div class="mb-2" id="animGridOpts" style="display:none">
+                        <div class="d-flex justify-content-between small text-muted">
+                            <label for="animPitchMax" class="form-label mb-0">Look up/down limit:</label>
+                            <span><strong id="animPitchMaxVal">60</strong>°</span>
+                        </div>
+                        <input type="range" class="form-range" id="animPitchMax" min="15" max="89" step="1" value="60">
+
+                        <div class="d-flex justify-content-between small text-muted">
+                            <label for="animPitchFrames" class="form-label mb-0">Pitch frames:</label>
+                            <span><strong id="animPitchFramesVal">9</strong></span>
+                        </div>
+                        <input type="range" class="form-range" id="animPitchFrames" min="2" max="25" step="1" value="9">
+                        <div class="small text-muted mb-1" id="animPitchInfo"></div>
+
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="animPitchInvert">
+                            <label class="form-check-label small" for="animPitchInvert">Invert pitch direction</label>
+                        </div>
                     </div>
 
                     <div class="mb-2">
