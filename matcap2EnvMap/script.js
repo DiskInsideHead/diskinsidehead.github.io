@@ -2642,38 +2642,44 @@ function renderFrameAsync(size, p) {
     });
 }
 
-function animVmtSnippet(envPath, frames, grid) {
-    if (grid) return `// Add to your VMT (keep your other parameters and proxies):
-"$envmap" "${envPath}"
-"$envmapframe" 0
-
-Proxies
-{
-    dih_envmapcamera360
-    {
-        "offset" "0"
-        "frames" "${grid.yawN}"
-        "pitchframes" "${grid.pitchN}"
-        "pitchmax" "${grid.pitchMax}"
-    }
-}
-`;
-    return `// Add to your VMT (keep your other parameters and proxies):
-"$envmap" "${envPath}"
-"$envmapframe" 0
-
-// Source Engine will automatically load "${envPath}.hdr.vtf" in HDR mode,
-// or "${envPath}.vtf" in LDR mode.
-
-Proxies
-{
-    dih_envmapcameraspace
-    {
-        "offset" "180"
-        "frames" "${frames}"
-    }
-}
-`;
+// Full example VMT written next to the animated envmap (layout follows default.vmt / default_360.vmt).
+function animVmt(envPath, frames, grid, axis) {
+    const kv = (k, v, c) => `            ${('"' + k + '"').padEnd(14)}${('"' + v + '"').padEnd(8)}// ${c}`;
+    const proxy = grid ? 'dih_envmapcameraspace_360' : 'dih_envmapcameraspace_' + axis;
+    const lines = grid
+        ? [
+            kv('offset', '0', 'yaw offset, deg'),
+            kv('frames', frames, 'yaw frames'),
+            kv('pitchframes', grid.pitchN, 'pitch frames'),
+            kv('pitchmax', grid.pitchMax, 'pitch range +-deg')
+        ]
+        : [
+            kv('offset', '0', 'yaw offset, deg'),
+            kv('frames', frames, 'yaw frames')
+        ];
+    lines.push(kv('usepos', '1', '1 = use direction eye -> entity, 0 = camera angles'));
+    return [
+        'VertexLitGeneric',
+        '{',
+        '    $basetexture "color/black"',
+        '',
+        '    $phong 0',
+        '',
+        '    $rimlight 0',
+        '',
+        `    $envmap "${envPath.replace(/\//g, '\\')}"`,
+        '',
+        '    $envmaptint "[1 1 1]"',
+        '',
+        '    Proxies',
+        '    {',
+        `        ${proxy}`,
+        '        {',
+        ...lines,
+        '        }',
+        '    }',
+        '}'
+    ].join('\r\n');
 }
 
 (function setupAnimPack() {
@@ -2817,11 +2823,13 @@ Proxies
             const vtf = buildVTFAnimated(ldrFrames, ldrSize, flip, format);
 
             const matPath = getMatPath();
-            const last = matPath.split('/').pop();
-            const vtfName = last + '_envanim.vtf';
+            const last = matPath.split(/[\\/]/).pop();
+            const tag = axis === 'grid' ? '_360' : '';
+            const vtfName = last + tag + '_envanim.vtf';
             const files = [{ name: vtfName, data: vtf }];
             if (!includeExamplesCheckbox || includeExamplesCheckbox.checked) {
-                files.push({ name: 'vmt_snippet.txt', data: new TextEncoder().encode(animVmtSnippet(matPath + '_envanim', N, axis === 'grid' ? { yawN: N, pitchN: gridCfg().pitchN, pitchMax: gridCfg().pitchMax } : null)) });
+                const vmt = animVmt(matPath + tag + '_envanim', N, axis === 'grid' ? { pitchN: gridCfg().pitchN, pitchMax: gridCfg().pitchMax } : null, axis);
+                files.push({ name: last + tag + '.vmt', data: new TextEncoder().encode(vmt) });
             }
 
             let hdrInfo = '';
@@ -2830,13 +2838,13 @@ Proxies
                 await new Promise(r => setTimeout(r, 0));
                 const { frames: hdrFrames } = prepareFramesForSize(rawFrames, renderSize, hdrSize);
                 const vtfHdr = buildVTFAnimated(hdrFrames, hdrSize, flip, 'RGBA16161616F');
-                files.push({ name: last + '_envanim.hdr.vtf', data: vtfHdr });
+                files.push({ name: last + tag + '_envanim.hdr.vtf', data: vtfHdr });
                 hdrInfo = ` + HDR (${hdrSize}px, ${(vtfHdr.length / 1048576).toFixed(2)} MB)`;
             }
 
             status.textContent = 'Zipping files…';
             await new Promise(r => setTimeout(r, 0));
-            download(buildZip(files), last + '_envanim_pack.zip', 'application/zip');
+            download(buildZip(files), last + tag + '_envanim_pack.zip', 'application/zip');
             status.textContent = `Done: ${ldrFrames.length} frames (${axis.toUpperCase()}), LDR (${ldrSize}px, ${(vtf.length / 1048576).toFixed(2)} MB)${hdrInfo}`;
         } catch (err) {
             console.error(err);
@@ -2866,8 +2874,8 @@ Proxies
                 const vtfHdr = buildVTFAnimated(rawFrames, hdrSize, flip, 'RGBA16161616F');
 
                 const matPath = getMatPath();
-                const last = matPath.split('/').pop();
-                download(vtfHdr, last + '_envanim.hdr.vtf', 'application/octet-stream');
+                const last = matPath.split(/[\\/]/).pop();
+                download(vtfHdr, last + (axis === 'grid' ? '_360' : '') + '_envanim.hdr.vtf', 'application/octet-stream');
                 status.textContent = `Done: HDR downloaded (${rawFrames.length} frames, ${hdrSize}px, ${(vtfHdr.length / 1048576).toFixed(2)} MB)`;
             } catch (err) {
                 console.error(err);
