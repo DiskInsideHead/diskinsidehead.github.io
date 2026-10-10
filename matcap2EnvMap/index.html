@@ -185,15 +185,14 @@
                 }
                 .main-placeholder { min-height: 60vh; flex: none; }
             }
+            #resultArea { max-width: none; }
             #facesOutput {
+                /* --cell is set from script (fitFaceGrid) so the grid fills the free space */
                 display: grid;
-                grid-template-columns: repeat(4, 1fr);
-                grid-template-rows: repeat(3, 1fr);
+                grid-template-columns: repeat(4, var(--cell, 170px));
+                justify-content: center;
                 gap: 8px;
                 margin-top: 10px;
-                max-width: 720px;
-                margin-left: auto;
-                margin-right: auto;
             }
             #facesOutput .face-cell { text-align: center; }
             .face-cell[data-face="nx"] { grid-column: 1; grid-row: 2; }
@@ -204,6 +203,7 @@
             .face-cell[data-face="matcap"] { grid-column: 1; grid-row: 1; }
             .face-cell[data-face="ny"] { grid-column: 3; grid-row: 3; }
             #facesOutput canvas {
+                display: block;
                 width: 100%;
                 border-radius: 6px;
                 background: #000;
@@ -215,6 +215,71 @@
                 font-size: 12px;
                 color: #888;
                 margin-top: 4px;
+            }
+            #facesOutput .env-cell { grid-column: 2; grid-row: 1; text-align: center; position: relative; }
+            #facesOutput #envSphereCanvas {
+                display: block;
+                width: 100%;
+                aspect-ratio: 1 / 1;
+                border-radius: 6px;
+                background: #fff;
+                border: 1px solid rgba(128, 128, 128, 0.35);
+                box-sizing: border-box;
+                cursor: grab;
+                touch-action: none;
+            }
+            #facesOutput #envSphereCanvas.dragging { cursor: grabbing; }
+            #facesOutput .env-bar { display: block; margin-top: 4px; }
+            .env-link {
+                border: 0;
+                background: none;
+                padding: 0;
+                font-size: 12px;
+                color: #0d6efd;
+                text-decoration: underline;
+                cursor: pointer;
+            }
+            .env-link:hover { color: #0a58ca; }
+            #facesOutput .env-cell.env-full {
+                position: fixed;
+                inset: 0;
+                z-index: 3000;
+                background: #fff;
+                margin: 0;
+            }
+            #facesOutput .env-cell.env-full #envSphereCanvas {
+                width: 100%;
+                height: 100%;
+                aspect-ratio: auto;
+                border: 0;
+                border-radius: 0;
+            }
+            #facesOutput .env-cell.env-full .env-bar {
+                position: absolute;
+                top: 14px;
+                right: 18px;
+                margin: 0;
+            }
+            #facesOutput .env-cell.env-full .env-link {
+                font-size: 16px;
+                padding: 6px 14px;
+                border-radius: 6px;
+                background: rgba(255, 255, 255, 0.9);
+                border: 1px solid #0d6efd;
+                text-decoration: none;
+            }
+            .btn-group > .size-btn {
+                flex: 1 1 0;
+                min-width: 0;
+                padding-left: 0;
+                padding-right: 0;
+            }
+            .size-hint {
+                font-size: .62rem;
+                font-weight: 400;
+                line-height: 1.1;
+                opacity: .8;
+                white-space: nowrap;
             }
             .ball-controller-wrap {
                 width: 80px;
@@ -306,22 +371,22 @@
                     <fieldset>
                         <div class="btn-group w-100" role="group">
                             <input class="btn-check" id="size-16" name="faceSize" type="radio" value="16">
-                            <label class="btn btn-outline-primary px-1" for="size-16">16</label>
+                            <label class="btn btn-outline-primary px-1 size-btn" for="size-16">16<small class="size-hint d-block"></small></label>
 
                             <input class="btn-check" id="size-32" name="faceSize" type="radio" value="32">
-                            <label class="btn btn-outline-primary px-1" for="size-32">32</label>
+                            <label class="btn btn-outline-primary px-1 size-btn" for="size-32">32<small class="size-hint d-block"></small></label>
 
                             <input class="btn-check" id="size-64" name="faceSize" type="radio" value="64">
-                            <label class="btn btn-outline-primary px-1" for="size-64">64</label>
+                            <label class="btn btn-outline-primary px-1 size-btn" for="size-64">64<small class="size-hint d-block"></small></label>
 
                             <input class="btn-check" id="size-128" name="faceSize" type="radio" value="128">
-                            <label class="btn btn-outline-primary px-1" for="size-128">128</label>
+                            <label class="btn btn-outline-primary px-1 size-btn" for="size-128">128<small class="size-hint d-block"></small></label>
 
                             <input class="btn-check" id="size-256" name="faceSize" type="radio" value="256">
-                            <label class="btn btn-outline-primary px-1" for="size-256">256</label>
+                            <label class="btn btn-outline-primary px-1 size-btn" for="size-256">256<small class="size-hint d-block"></small></label>
 
                             <input checked class="btn-check" id="size-512" name="faceSize" type="radio" value="512">
-                            <label class="btn btn-outline-primary px-1" for="size-512">512</label>
+                            <label class="btn btn-outline-primary px-1 size-btn" for="size-512">512<small class="size-hint d-block"></small></label>
                         </div>
                     </fieldset>
 
@@ -329,22 +394,22 @@
                     <fieldset>
                         <div class="btn-group w-100" role="group">
                             <input class="btn-check" id="hdr-size-16" name="hdrFaceSize" type="radio" value="16">
-                            <label class="btn btn-outline-warning px-1" for="hdr-size-16">16</label>
+                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-16">16<small class="size-hint d-block"></small></label>
 
                             <input class="btn-check" id="hdr-size-32" name="hdrFaceSize" type="radio" value="32">
-                            <label class="btn btn-outline-warning px-1" for="hdr-size-32">32</label>
+                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-32">32<small class="size-hint d-block"></small></label>
 
                             <input class="btn-check" id="hdr-size-64" name="hdrFaceSize" type="radio" value="64">
-                            <label class="btn btn-outline-warning px-1" for="hdr-size-64">64</label>
+                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-64">64<small class="size-hint d-block"></small></label>
 
                             <input class="btn-check" id="hdr-size-128" name="hdrFaceSize" type="radio" value="128">
-                            <label class="btn btn-outline-warning px-1" for="hdr-size-128">128</label>
+                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-128">128<small class="size-hint d-block"></small></label>
 
                             <input checked class="btn-check" id="hdr-size-256" name="hdrFaceSize" type="radio" value="256">
-                            <label class="btn btn-outline-warning px-1" for="hdr-size-256">256</label>
+                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-256">256<small class="size-hint d-block"></small></label>
 
                             <input class="btn-check" id="hdr-size-512" name="hdrFaceSize" type="radio" value="512">
-                            <label class="btn btn-outline-warning px-1" for="hdr-size-512">512</label>
+                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-512">512<small class="size-hint d-block"></small></label>
                         </div>
                     </fieldset>
 
@@ -356,6 +421,9 @@
 
                             <input class="btn-check" id="fmt-bgr888" name="pixelFormat" type="radio" value="BGR888">
                             <label class="btn btn-outline-primary" for="fmt-bgr888">BGR888</label>
+
+                            <input class="btn-check" id="fmt-bgr565" name="pixelFormat" type="radio" value="BGR565">
+                            <label class="btn btn-outline-primary" for="fmt-bgr565">BGR565</label>
                         </div>
                     </fieldset>
                 </div>
@@ -638,7 +706,12 @@
                 <div class="main-placeholder" id="mainPlaceholder" role="button" tabindex="0">Drop or click to load a base matcap or a .vtf cubemap</div>
 
                 <div id="resultArea" style="display:none">
-                    <output id="facesOutput"></output>
+                    <output id="facesOutput">
+                        <div class="env-cell" id="envSphereWrap">
+                            <canvas id="envSphereCanvas" width="300" height="300"></canvas>
+                            <span class="env-bar"><button type="button" class="env-link" id="envSphereFs" title="Open full screen">env sphere</button></span>
+                        </div>
+                    </output>
 
                     <div class="d-flex gap-2 justify-content-center flex-wrap mt-3 mb-3">
                         <button class="btn btn-success" id="dlVtf">Download .vtf</button>

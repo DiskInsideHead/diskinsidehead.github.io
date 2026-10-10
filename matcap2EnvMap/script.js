@@ -1481,15 +1481,259 @@ function renderPreview(faces, size) {
         }
         canvas.getContext('2d').putImageData(new ImageData(faces[face], size, size), 0, 0);
     }
+    envSphere.update(faces, size);
+    fitFaceGrid();
 }
 
 const FACES = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
+
+// ---------------------------------------------------------------------------
+// Mirror-ball preview: shows the generated cubemap as an environment map.
+// Uses the exact same face basis / direction convention as the engine (BASIS),
+// so what you see on the ball is what the faces contain.
+// ---------------------------------------------------------------------------
+// Scales the 4x3 face grid so it fills the free area of the main panel (down to the bottom of the page).
+function fitFaceGrid() {
+    const holder = document.getElementById('facesOutput');
+    const main = document.getElementById('appMain');
+    if (!holder || !main || resultArea.style.display === 'none') return;
+
+    const cs = getComputedStyle(main);
+    const availW = main.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const gap = 8, MAX = 520, MIN = 48;
+    let cell = (availW - gap * 3) / 4;
+
+    if (window.innerWidth > 900) {                        // desktop layout: main panel has a fixed height
+        const availH = main.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+        const btns = resultArea.querySelector('.d-flex');
+        let btnH = 0;
+        if (btns) {
+            const bs = getComputedStyle(btns);
+            btnH = btns.offsetHeight + parseFloat(bs.marginTop) + parseFloat(bs.marginBottom);
+        }
+        const lbl = holder.querySelector('.face-cell span, .env-cell .env-bar');
+        const labelH = (lbl ? lbl.offsetHeight : 18) + 4;
+        const topMargin = parseFloat(getComputedStyle(holder).marginTop) || 0;
+        const cellByH = (availH - btnH - topMargin - gap * 2 - labelH * 3 - 2) / 3;
+        cell = Math.min(cell, cellByH);
+    }
+    cell = Math.max(MIN, Math.min(MAX, Math.floor(cell)));
+    holder.style.setProperty('--cell', cell + 'px');
+
+    // the estimate above can be a few px off, so trim until the panel really stops scrolling
+    if (window.innerWidth > 900) {
+        for (let i = 0; i < 24 && cell > MIN && main.scrollHeight > main.clientHeight; i++) {
+            const over = main.scrollHeight - main.clientHeight;
+            cell = Math.max(MIN, cell - Math.max(1, Math.ceil(over / 3)));
+            holder.style.setProperty('--cell', cell + 'px');
+        }
+    }
+}
+(() => {
+    const main = document.getElementById('appMain');
+    if (window.ResizeObserver && main) new ResizeObserver(fitFaceGrid).observe(main);
+    window.addEventListener('resize', fitFaceGrid);
+})();
+
+const envSphere = (() => {
+    const noop = { update() {} };
+    const wrap = document.getElementById('envSphereWrap');
+    const cv = document.getElementById('envSphereCanvas');
+    if (!wrap || !cv) return noop;
+
+    const gl = cv.getContext('webgl2', { antialias: true, alpha: false });
+    if (!gl) { wrap.hidden = true; return noop; }
+
+    const VS = `#version 300 es
+    void main() {
+        vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+        gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+    }`;
+
+    const FS = `#version 300 es
+    precision highp float;
+    uniform sampler2D t0, t1, t2, t3, t4, t5;
+    uniform vec2 uRes;
+    uniform vec3 uF, uR, uU;
+    uniform float uSize, uBg;
+    out vec4 o;
+
+    const vec3 A[6] = vec3[6](vec3(0,0,-1), vec3(0,0,1), vec3(1,0,0), vec3(1,0,0), vec3(1,0,0), vec3(-1,0,0));
+    const vec3 B[6] = vec3[6](vec3(0,1,0),  vec3(0,1,0), vec3(0,0,-1), vec3(0,0,1), vec3(0,1,0), vec3(0,1,0));
+    const vec3 C[6] = vec3[6](vec3(1,0,0),  vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1));
+
+    vec2 faceUV(int i, vec3 d) {
+        float dc = dot(d, C[i]);
+        vec2 uv = vec2((dot(d, A[i]) / dc + 1.0) * 0.5, (1.0 - dot(d, B[i]) / dc) * 0.5);
+        // engine maps pixel c to u = c / (size - 1): convert to texel-centre coordinates
+        return (uv * (uSize - 1.0) + 0.5) / uSize;
+    }
+
+    vec3 env(vec3 d) {
+        // all six are sampled outside of any branch so mip selection has no seams
+        vec3 s0 = texture(t0, faceUV(0, d)).rgb;
+        vec3 s1 = texture(t1, faceUV(1, d)).rgb;
+        vec3 s2 = texture(t2, faceUV(2, d)).rgb;
+        vec3 s3 = texture(t3, faceUV(3, d)).rgb;
+        vec3 s4 = texture(t4, faceUV(4, d)).rgb;
+        vec3 s5 = texture(t5, faceUV(5, d)).rgb;
+        vec3 a = abs(d);
+        if (a.x >= a.y && a.x >= a.z) return d.x > 0.0 ? s0 : s1;
+        if (a.y >= a.z) return d.y > 0.0 ? s2 : s3;
+        return d.z > 0.0 ? s4 : s5;
+    }
+
+    void main() {
+        vec2 p = (gl_FragCoord.xy - 0.5 * uRes) / (0.5 * min(uRes.x, uRes.y));
+        vec3 rd = normalize(uF + (uR * p.x + uU * p.y) * 0.45);
+        vec3 ro = -uF * 3.0;
+        float b = dot(ro, rd);
+        float h = b * b - (dot(ro, ro) - 1.0);
+        // both lookups run for every pixel (uniform control flow keeps mip levels seamless)
+        vec3 n = normalize(ro + rd * (-b - sqrt(max(h, 0.0))));
+        vec3 eBall = env(reflect(rd, n));
+        vec3 eBack = env(rd);
+        vec3 col = h > 0.0 ? eBall : (uBg > 0.5 ? eBack : vec3(1.0));
+        o = vec4(col, 1.0);
+    }`;
+
+    function compile(type, src) {
+        const sh = gl.createShader(type);
+        gl.shaderSource(sh, src);
+        gl.compileShader(sh);
+        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+        return sh;
+    }
+
+    let prog;
+    try {
+        prog = gl.createProgram();
+        gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+        gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    } catch (err) {
+        console.error('Env sphere disabled:', err);
+        wrap.hidden = true;
+        return noop;
+    }
+    gl.useProgram(prog);
+
+    const tex = [];
+    for (let i = 0; i < 6; i++) {
+        const t = gl.createTexture();
+        gl.activeTexture(gl.TEXTURE0 + i);
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.uniform1i(gl.getUniformLocation(prog, 't' + i), i);
+        tex.push(t);
+    }
+    const uni = n => gl.getUniformLocation(prog, n);
+    const uRes = uni('uRes'), uF = uni('uF'), uR = uni('uR'), uU = uni('uU'), uSize = uni('uSize'), uBg = uni('uBg');
+
+    const FLIP_X = true;   // mirror the ball horizontally (set false for a physically mirrored ball)
+    const HOME_YAW = -Math.PI / 2, HOME_PITCH = 0;   // forward = -X, so the ball centre reflects +X (px)
+    let yaw = HOME_YAW, pitch = HOME_PITCH;
+    let pending = null, size = 0, raf = 0;
+
+    function draw() {
+        raf = 0;
+        if (pending) {
+            const { faces, size: sz } = pending;
+            pending = null;
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+            gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+            FACES.forEach((f, i) => {
+                const d = faces[f];
+                gl.activeTexture(gl.TEXTURE0 + i);
+                gl.bindTexture(gl.TEXTURE_2D, tex[i]);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, sz, sz, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+                    new Uint8Array(d.buffer, d.byteOffset, d.byteLength));
+                gl.generateMipmap(gl.TEXTURE_2D);
+            });
+            size = sz;
+        }
+        if (!size) return;
+
+        // left-handed camera, same convention as the cubemap faces (+Z forward, +X right, +Y up)
+        const cp = Math.cos(pitch), sp = Math.sin(pitch), cy = Math.cos(yaw), sy = Math.sin(yaw);
+        const f = [cp * sy, sp, cp * cy];
+        let r = [f[2], 0, -f[0]];                       // cross(up, f)
+        const rl = Math.hypot(r[0], r[2]) || 1;
+        r = [r[0] / rl, 0, r[2] / rl];
+        const u = [f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]]; // cross(f, r)
+
+        gl.viewport(0, 0, cv.width, cv.height);
+        gl.uniform2f(uRes, cv.width, cv.height);
+        gl.uniform3fv(uF, f);
+        gl.uniform3fv(uR, FLIP_X ? [-r[0], -r[1], -r[2]] : r);
+        gl.uniform3fv(uU, u);
+        gl.uniform1f(uSize, size);
+        gl.uniform1f(uBg, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(draw); };
+
+    let drag = null;
+    cv.addEventListener('pointerdown', e => {
+        drag = { x: e.clientX, y: e.clientY };
+        cv.setPointerCapture(e.pointerId);
+        cv.classList.add('dragging');
+    });
+    cv.addEventListener('pointermove', e => {
+        if (!drag) return;
+        yaw -= (e.clientX - drag.x) * 0.008 * (FLIP_X ? -1 : 1);
+        pitch = Math.max(-1.5, Math.min(1.5, pitch + (e.clientY - drag.y) * 0.008));
+        drag.x = e.clientX; drag.y = e.clientY;
+        schedule();
+    });
+    const endDrag = () => { drag = null; cv.classList.remove('dragging'); };
+    cv.addEventListener('pointerup', endDrag);
+    cv.addEventListener('pointercancel', endDrag);
+    cv.addEventListener('dblclick', () => { yaw = HOME_YAW; pitch = HOME_PITCH; schedule(); });
+
+    // keep the backbuffer matched to the displayed size (grid cell or full page)
+    const fitCanvas = () => {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
+        if (w < 32 || h < 32) return;
+        if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; schedule(); }
+    };
+    if (window.ResizeObserver) new ResizeObserver(fitCanvas).observe(cv);
+    window.addEventListener('resize', fitCanvas);
+
+    const fsBtn = document.getElementById('envSphereFs');
+    const setFull = on => {
+        wrap.classList.toggle('env-full', on);
+        if (fsBtn) {
+            fsBtn.textContent = on ? '✕ close (Esc)' : 'env sphere';
+            fsBtn.title = on ? 'Close' : 'Open full screen';
+        }
+        fitCanvas();
+        schedule();
+    };
+    if (fsBtn) fsBtn.addEventListener('click', () => setFull(!wrap.classList.contains('env-full')));
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && wrap.classList.contains('env-full')) setFull(false);
+    });
+
+    return {
+        update(faces, sz) {
+            pending = { faces, size: sz };
+            schedule();
+        }
+    };
+})();
 
 generateBtn.addEventListener('click', () => triggerRender(false));
 
 const VTF_FORMATS = {
     RGBA8888: 0,
     BGR888: 3,
+    BGR565: 17,
     BGRA8888: 12,
     DXT1: 13,
     RGBA16161616F: 24,
@@ -1543,6 +1787,20 @@ function packBGR888(src) {
     const out = new Uint8Array(px * 3);
     for (let i = 0, j = 0; i < src.length; i += 4, j += 3) {
         out[j] = src[i + 2]; out[j + 1] = src[i + 1]; out[j + 2] = src[i];
+    }
+    return out;
+}
+
+// VTF BGR565 = D3DFMT_R5G6B5 as used by Source: little-endian 16-bit word, R in the high 5 bits, B in the low 5.
+function packBGR565(src) {
+    const px = src.length / 4;
+    const out = new Uint8Array(px * 2);
+    for (let i = 0, j = 0; i < src.length; i += 4, j += 2) {
+        const r5 = Math.min(31, Math.round(src[i] * 31 / 255));
+        const g6 = Math.min(63, Math.round(src[i + 1] * 63 / 255));
+        const b5 = Math.min(31, Math.round(src[i + 2] * 31 / 255));
+        const w = (r5 << 11) | (g6 << 5) | b5;
+        out[j] = w & 0xff; out[j + 1] = w >> 8;
     }
     return out;
 }
@@ -1622,6 +1880,7 @@ function packFace(rgba, size, format) {
     switch (format) {
         case 'BGRA8888': return packBGRA8888(rgba);
         case 'BGR888': return packBGR888(rgba);
+        case 'BGR565': return packBGR565(rgba);
         case 'DXT1': return packDXT1(rgba, size);
         case 'RGBA16161616F': return packRGBA16161616F(rgba);
         default: return rgba;
@@ -1632,6 +1891,7 @@ function faceByteSize(size, format) {
     switch (format) {
         case 'BGRA8888': return size * size * 4;
         case 'BGR888': return size * size * 3;
+        case 'BGR565': return size * size * 2;
         case 'DXT1': return (size / 4) * (size / 4) * 8;
         case 'RGBA16161616F': return size * size * 8;
         default: return size * size * 4;
@@ -1782,6 +2042,36 @@ function getPixelFormat() {
     return checked ? checked.value : 'DXT1';
 }
 
+// Approximate .vtf size (header + full mip chain, 6 faces + sphere slot per level) shown on the size buttons.
+function estimateVtfBytes(size, format) {
+    const minSize = format === 'DXT1' ? 4 : 1;
+    let total = 64;
+    for (let s = size; s >= minSize; s = Math.floor(s / 2)) {
+        total += faceByteSize(s, format) * 7;
+        if (s === minSize) break;
+    }
+    return total;
+}
+
+function formatBytes(b) {
+    if (b < 10240) return (b / 1024).toFixed(1) + ' KB';
+    if (b < 1048576) return Math.round(b / 1024) + ' KB';
+    const mb = b / 1048576;
+    return (mb < 10 ? mb.toFixed(1) : Math.round(mb)) + ' MB';
+}
+
+function refreshSizeHints() {
+    const fmt = getPixelFormat();
+    document.querySelectorAll('input[name="faceSize"], input[name="hdrFaceSize"]').forEach(inp => {
+        const hint = document.querySelector(`label[for="${inp.id}"] .size-hint`);
+        if (!hint) return;
+        const f = inp.name === 'hdrFaceSize' ? 'RGBA16161616F' : fmt;
+        hint.textContent = '~' + formatBytes(estimateVtfBytes(parseInt(inp.value, 10), f));
+    });
+}
+document.querySelectorAll('input[name="pixelFormat"]').forEach(el => el.addEventListener('change', refreshSizeHints));
+refreshSizeHints();
+
 function getFlipRows() {
     const checked = document.querySelector('input[name="flipRows"]:checked');
     return checked ? checked.value === 'true' : false;
@@ -1857,8 +2147,8 @@ function decodeVTFImage(dv, off, w, h, fmt) {
             case 1:  b = dv.getUint8(off + 1); g = dv.getUint8(off + 2); r = dv.getUint8(off + 3); off += 4; break;
             case 2:  r = dv.getUint8(off); g = dv.getUint8(off + 1); b = dv.getUint8(off + 2); off += 3; break;
             case 3:  b = dv.getUint8(off); g = dv.getUint8(off + 1); r = dv.getUint8(off + 2); off += 3; break;
-            case 4:  { const c = unpack565(dv.getUint16(off, true)); r = c[0]; g = c[1]; b = c[2]; off += 2; break; }
-            case 17: { const c = unpack565(dv.getUint16(off, true)); r = c[2]; g = c[1]; b = c[0]; off += 2; break; }
+            case 4:  { const c = unpack565(dv.getUint16(off, true)); r = c[2]; g = c[1]; b = c[0]; off += 2; break; }
+            case 17: { const c = unpack565(dv.getUint16(off, true)); r = c[0]; g = c[1]; b = c[2]; off += 2; break; }
             case 5:  r = g = b = dv.getUint8(off); off += 1; break;
             case 6:  r = g = b = dv.getUint8(off); off += 2; break;
             case 11: r = dv.getUint8(off + 1); g = dv.getUint8(off + 2); b = dv.getUint8(off + 3); off += 4; break;
@@ -1966,7 +2256,7 @@ function clearBase() {
     baseName.textContent = '';
     baseDims.textContent = '';
 
-    document.getElementById('facesOutput').innerHTML = '';
+    document.querySelectorAll('#facesOutput .face-cell').forEach(c => c.remove());
     resultArea.style.display = 'none';
     mainPlaceholder.style.display = '';
 
@@ -2021,16 +2311,81 @@ async function loadEnvVtf(file) {
     applyEnv(false);
 }
 
+// Inverse of the export orientation (see EXPORT_RX / forExport in makeRotator):
+// export samples direction (x,y,z) -> (x,z,-y), so on import we sample (x,y,z) -> (x,-z,y).
+// This is an exact 90° turn of the cube, i.e. a pure permutation of face pixels.
+const IMPORT_BASIS = {
+    px: [0, 0, -1, 0, 1, 0, 1, 0, 0],
+    nx: [0, 0, 1, 0, 1, 0, -1, 0, 0],
+    py: [1, 0, 0, 0, 0, -1, 0, 1, 0],
+    ny: [1, 0, 0, 0, 0, 1, 0, -1, 0],
+    pz: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    nz: [-1, 0, 0, 0, 1, 0, 0, 0, -1]
+};
+const importRemapCache = new Map();
+
+function getImportRemap(size) {
+    let m = importRemapCache.get(size);
+    if (m) return m;
+    m = {};
+    for (const f of FACES) {
+        const bs = IMPORT_BASIS[f];
+        const srcFace = new Uint8Array(size * size);
+        const srcPix = new Uint32Array(size * size);
+        for (let r = 0; r < size; r++) {
+            for (let c = 0; c < size; c++) {
+                const a = -1 + 2 * (c + 0.5) / size, b = 1 - 2 * (r + 0.5) / size;
+                const dx = bs[0] * a + bs[3] * b + bs[6];
+                const dy = bs[1] * a + bs[4] * b + bs[7];
+                const dz = bs[2] * a + bs[5] * b + bs[8];
+                const x = dx, y = -dz, z = dy;
+                const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
+                let fi;
+                if (ax >= ay && ax >= az) fi = x > 0 ? 0 : 1;
+                else if (ay >= az) fi = y > 0 ? 2 : 3;
+                else fi = z > 0 ? 4 : 5;
+                const s = IMPORT_BASIS[FACES[fi]];
+                const dc = x * s[6] + y * s[7] + z * s[8];
+                const u = ((x * s[0] + y * s[1] + z * s[2]) / dc + 1) * 0.5 * size - 0.5;
+                const v = (1 - (x * s[3] + y * s[4] + z * s[5]) / dc) * 0.5 * size - 0.5;
+                const i = r * size + c;
+                srcFace[i] = fi;
+                srcPix[i] = Math.round(v) * size + Math.round(u);
+            }
+        }
+        m[f] = { srcFace, srcPix };
+    }
+    importRemapCache.set(size, m);
+    return m;
+}
+
+function rotateFacesForImport(src, size) {
+    const map = getImportRemap(size);
+    const out = {};
+    for (const f of FACES) {
+        const { srcFace, srcPix } = map[f];
+        const dst = new Uint8ClampedArray(size * size * 4);
+        for (let i = 0; i < size * size; i++) {
+            const sp = src[FACES[srcFace[i]]];
+            const so = srcPix[i] * 4, d = i * 4;
+            dst[d] = sp[so]; dst[d + 1] = sp[so + 1]; dst[d + 2] = sp[so + 2]; dst[d + 3] = sp[so + 3];
+        }
+        out[f] = dst;
+    }
+    return out;
+}
+
 function applyEnv(draft) {
     if (!envState) return;
     sourceVer++;
     const size = envState.size, flip = getFlipRows();
-    const faces = {}, transfer = [];
+    const flipped = {};
     for (const f of FACES) {
-        const px = flip ? flipFaceRows(envState.raw[f], size) : new Uint8ClampedArray(envState.raw[f]);
-        faces[f] = px;
-        transfer.push(px.buffer);
+        flipped[f] = flip ? flipFaceRows(envState.raw[f], size) : envState.raw[f];
     }
+    // undo the export orientation so a re-export round-trips to the same file
+    const faces = rotateFacesForImport(flipped, size), transfer = [];
+    for (const f of FACES) transfer.push(faces[f].buffer);
     engine.send({ type: 'setEnv', faces, size }, transfer);
 
     srcW = srcH = size;
