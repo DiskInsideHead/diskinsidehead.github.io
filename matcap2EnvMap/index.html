@@ -1,730 +1,998 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="utf-8"/>
-        <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-        <link crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" rel="stylesheet"/>
-        <link rel="icon" type="image/x-icon" href="../styles/dih.ico">
-        <link href="../styles/style.css" rel="stylesheet"/>
-        <link href="../styles/foundation-icons.css" rel="stylesheet">
-        <title>DIH - Matcap to EnvMap</title>
-        <style>
-            html, body {
-                height: 100%;
-                overflow: hidden;
-            }
-            body {
-                margin: 0;
-            }
-            .app-shell {
-                display: flex;
-                align-items: stretch;
-                height: 100vh;
-            }
-            .app-sidebar {
-                flex: 0 0 380px;
-                width: 380px;
-                height: 100%;
-                overflow-y: auto;
-                padding: 20px;
-                border-right: 1px solid #dee2e6;
-                background: #fff;
-                text-align: left;
-            }
-            .app-sidebar h2 { font-size: 1.3rem; }
-            .app-sidebar .settings-area { margin-bottom: 14px; }
-            .app-sidebar .settings-area h3 {
-                font-size: 1rem;
-                margin-top: 10px;
-                margin-bottom: 8px;
-            }
-            .app-sidebar .settings-area h3:first-child,
-            .app-sidebar .settings-area > div:first-child > h3 {
-                margin-top: 0;
-            }
-            .sidebar-actions {
-                position: sticky;
-                bottom: 0;
-                background: #fff;
-                padding-top: 10px;
-                margin-top: 6px;
-                z-index: 10;
-            }
-            .app-main {
-                flex: 1;
-                min-width: 0;
-                height: 100%;
-                padding: 32px 24px;
-                overflow-y: auto;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-            }
-            .app-main > * {
-                width: 100%;
-                max-width: 760px;
-            }
-            [hidden] { display: none !important; }
-            .main-placeholder {
-                flex: 1;
-                max-width: none;
-                margin: 0;
-                min-height: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                text-align: center;
-                border: 2px dashed #ced4da;
-                border-radius: 12px;
-                color: #868e96;
-                font-size: 15px;
-                cursor: pointer;
-                transition: border-color .15s, color .15s, background .15s;
-            }
-            .main-placeholder:hover, .main-placeholder:focus-visible, .main-placeholder.dragover {
-                border-color: #286090;
-                color: #286090;
-                background: #f3f7fb;
-                outline: none;
-            }
-
-            .slot-wrap {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                gap: 4px;
-            }
-            .slot {
-                position: relative;
-                width: 64px;
-                height: 64px;
-                flex: none;
-                border-radius: 8px;
-                border: 1px dashed #adb5bd;
-                background: #e9ecef;
-                cursor: pointer;
-                overflow: hidden;
-            }
-            .slot.slot-lg { width: 80px; height: 80px; }
-            .slot::before {
-                content: '+';
-                position: absolute;
-                inset: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 24px;
-                color: #868e96;
-            }
-            .slot canvas { display: none; width: 100%; height: 100%; }
-            .slot.filled { border: 1px solid #dee2e6; background: #1a1a2e; }
-            .slot.filled::before { content: none; }
-            .slot.filled canvas { display: block; }
-            .slot:hover, .slot:focus-visible, .slot.dragover {
-                border-color: #286090;
-                outline: none;
-            }
-            .slot.dragover { background: #dbe7f3; }
-            .slot-clear {
-                position: absolute;
-                top: 2px;
-                right: 2px;
-                width: 18px;
-                height: 18px;
-                padding: 0;
-                border: 0;
-                border-radius: 50%;
-                background: rgba(0, 0, 0, .65);
-                color: #fff;
-                font-size: 13px;
-                line-height: 18px;
-                text-align: center;
-                cursor: pointer;
-                display: none;
-            }
-            .slot.filled:hover .slot-clear,
-            .slot.filled:focus-within .slot-clear { display: block; }
-            .slot-caption { font-size: .75rem; color: #6c757d; }
-            .fit-panel summary { cursor: pointer; font-size: .8rem; color: #495057; user-select: none; }
-            .fit-panel .form-range { margin-bottom: 2px; }
-
-            .base-row { display: flex; align-items: center; gap: 12px; }
-            .base-info { min-width: 0; font-size: .85rem; }
-            .base-name {
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                font-weight: 600;
-            }
-            .base-dims { color: #6c757d; }
-            .slider-row + .slider-row { margin-top: 4px; }
-            .env-off { opacity: .35; pointer-events: none; }
-            .section-title { font-size: 1rem; margin: 16px 0 6px; }
-            @media (max-width: 900px) {
-                html, body {
-                    height: auto;
-                    overflow: visible;
-                }
-                .app-shell {
-                    height: auto;
-                    flex-direction: column;
-                }
-                .app-sidebar {
-                    width: 100%;
-                    flex: none;
-                    height: auto;
-                    max-height: none;
-                    overflow-y: visible;
-                    border-right: none;
-                    border-bottom: 1px solid #dee2e6;
-                }
-                .sidebar-actions { position: static; }
-                .app-main {
-                    height: auto;
-                    overflow-y: visible;
-                }
-                .main-placeholder { min-height: 60vh; flex: none; }
-            }
-            #resultArea { max-width: none; }
-            #facesOutput {
-                /* --cell is set from script (fitFaceGrid) so the grid fills the free space */
-                display: grid;
-                grid-template-columns: repeat(4, var(--cell, 170px));
-                justify-content: center;
-                gap: 8px;
-                margin-top: 10px;
-            }
-            #facesOutput .face-cell { text-align: center; }
-            .face-cell[data-face="nx"] { grid-column: 1; grid-row: 2; }
-            .face-cell[data-face="pz"] { grid-column: 2; grid-row: 2; }
-            .face-cell[data-face="px"] { grid-column: 3; grid-row: 2; }
-            .face-cell[data-face="nz"] { grid-column: 4; grid-row: 2; }
-            .face-cell[data-face="py"] { grid-column: 3; grid-row: 1; }
-            .face-cell[data-face="matcap"] { grid-column: 1; grid-row: 1; }
-            .face-cell[data-face="ny"] { grid-column: 3; grid-row: 3; }
-            #facesOutput canvas {
-                display: block;
-                width: 100%;
-                border-radius: 6px;
-                background: #000;
-            }
-            #facesOutput .face-cell[data-face="py"] canvas { transform: rotate(90deg); }
-            #facesOutput .face-cell[data-face="ny"] canvas { transform: rotate(-90deg); }
-            #facesOutput span {
-                display: block;
-                font-size: 12px;
-                color: #888;
-                margin-top: 4px;
-            }
-            #facesOutput .env-cell { grid-column: 2; grid-row: 1; text-align: center; position: relative; }
-            #facesOutput #envSphereCanvas {
-                display: block;
-                width: 100%;
-                aspect-ratio: 1 / 1;
-                border-radius: 6px;
-                background: #fff;
-                border: 1px solid rgba(128, 128, 128, 0.35);
-                box-sizing: border-box;
-                cursor: grab;
-                touch-action: none;
-            }
-            #facesOutput #envSphereCanvas.dragging { cursor: grabbing; }
-            #facesOutput .env-bar { display: block; margin-top: 4px; }
-            .env-link {
-                border: 0;
-                background: none;
-                padding: 0;
-                font-size: 12px;
-                color: #0d6efd;
-                text-decoration: underline;
-                cursor: pointer;
-            }
-            .env-link:hover { color: #0a58ca; }
-            #facesOutput .env-cell.env-full {
-                position: fixed;
-                inset: 0;
-                z-index: 3000;
-                background: #fff;
-                margin: 0;
-            }
-            #facesOutput .env-cell.env-full #envSphereCanvas {
-                width: 100%;
-                height: 100%;
-                aspect-ratio: auto;
-                border: 0;
-                border-radius: 0;
-            }
-            #facesOutput .env-cell.env-full .env-bar {
-                position: absolute;
-                top: 14px;
-                right: 18px;
-                margin: 0;
-            }
-            #facesOutput .env-cell.env-full .env-link {
-                font-size: 16px;
-                padding: 6px 14px;
-                border-radius: 6px;
-                background: rgba(255, 255, 255, 0.9);
-                border: 1px solid #0d6efd;
-                text-decoration: none;
-            }
-            .btn-group > .size-btn {
-                flex: 1 1 0;
-                min-width: 0;
-                padding-left: 0;
-                padding-right: 0;
-            }
-            .size-hint {
-                font-size: .62rem;
-                font-weight: 400;
-                line-height: 1.1;
-                opacity: .8;
-                white-space: nowrap;
-            }
-            .ball-controller-wrap {
-                width: 80px;
-                height: 80px;
-                border-radius: 50%;
-                background: radial-gradient(circle at 35% 35%, #ffffff 0%, #e2e8f0 40%, #94a3b8 100%);
-                border: 2px solid #0d6efd;
-                position: relative;
-                margin: 4px auto 8px auto;
-                cursor: crosshair;
-                box-shadow: inset -2px -2px 6px rgba(0,0,0,0.2), 0 2px 5px rgba(0,0,0,0.1);
-                user-select: none;
-                touch-action: none;
-            }
-            .ball-handle {
-                width: 12px;
-                height: 12px;
-                border-radius: 50%;
-                background-color: #dc3545;
-                border: 2px solid #ffffff;
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                pointer-events: none;
-                box-shadow: 0 0 4px rgba(0,0,0,0.5);
-            }
-
-            .app-sidebar, .app-main {
-                -webkit-user-select: none;
-                user-select: none;
-            }
-            .app-sidebar input[type="text"] {
-                -webkit-user-select: text;
-                user-select: text;
-            }
-            canvas, img {
-                -webkit-user-drag: none;
-                user-drag: none;
-            }
-
-            :root {
-                --checker: repeating-conic-gradient(#c9c9c9 0% 25%, #ffffff 0% 50%) 50% / 10px 10px;
-            }
-            .alpha-range::-webkit-slider-runnable-track {
-                height: .9rem;
-                border-radius: .45rem;
-                border: 1px solid #ced4da;
-                background: linear-gradient(to right, transparent, var(--alpha-color, #000)), var(--checker);
-            }
-            .alpha-range::-moz-range-track {
-                height: .9rem;
-                border-radius: .45rem;
-                border: 1px solid #ced4da;
-                background: linear-gradient(to right, transparent, var(--alpha-color, #000)), var(--checker);
-            }
-            .alpha-range::-webkit-slider-thumb { margin-top: -.2rem; }
-        </style>
-    </head>
-    <body>
-        <div class="app-shell">
-            <aside class="app-sidebar">
-                <div id="drop-area">
-                    <h2>Matcap → EnvMap</h2>
-                </div>
-
-                <div class="settings-area p-3 border rounded bg-light">
-                    <h3>Base matcap / VTF envmap</h3>
-                    <div class="base-row">
-                        <div id="baseSlotHost"></div>
-                        <div class="base-info" id="baseInfo" hidden>
-                            <div class="base-name" id="baseName"></div>
-                            <div class="base-dims" id="baseDims"></div>
-                            <button type="button" class="btn btn-sm btn-outline-danger mt-1" id="clearBaseBtn">Clear</button>
-                        </div>
-                    </div>
-                    <div id="baseFitHost"></div>
-                </div>
-
-                <h3 class="section-title">Extra matcap layers</h3>
-                <div id="layersContainer"></div>
-                <button type="button" class="btn btn-outline-primary btn-sm w-100 mb-3" id="addLayerBtn">+ Add layer</button>
-
-                <label for="matPath" class="form-label mb-1">File name</label>
-                <input class="form-control mb-3" id="matPath" type="text" value="material" placeholder="material">
-
-                <div class="settings-area p-3 border rounded bg-light">
-                    <h3>Face size (LDR)</h3>
-                    <fieldset>
-                        <div class="btn-group w-100" role="group">
-                            <input class="btn-check" id="size-16" name="faceSize" type="radio" value="16">
-                            <label class="btn btn-outline-primary px-1 size-btn" for="size-16">16<small class="size-hint d-block"></small></label>
-
-                            <input class="btn-check" id="size-32" name="faceSize" type="radio" value="32">
-                            <label class="btn btn-outline-primary px-1 size-btn" for="size-32">32<small class="size-hint d-block"></small></label>
-
-                            <input class="btn-check" id="size-64" name="faceSize" type="radio" value="64">
-                            <label class="btn btn-outline-primary px-1 size-btn" for="size-64">64<small class="size-hint d-block"></small></label>
-
-                            <input class="btn-check" id="size-128" name="faceSize" type="radio" value="128">
-                            <label class="btn btn-outline-primary px-1 size-btn" for="size-128">128<small class="size-hint d-block"></small></label>
-
-                            <input class="btn-check" id="size-256" name="faceSize" type="radio" value="256">
-                            <label class="btn btn-outline-primary px-1 size-btn" for="size-256">256<small class="size-hint d-block"></small></label>
-
-                            <input checked class="btn-check" id="size-512" name="faceSize" type="radio" value="512">
-                            <label class="btn btn-outline-primary px-1 size-btn" for="size-512">512<small class="size-hint d-block"></small></label>
-                        </div>
-                    </fieldset>
-
-                    <h3 class="mt-2">HDR Face size</h3>
-                    <fieldset>
-                        <div class="btn-group w-100" role="group">
-                            <input class="btn-check" id="hdr-size-16" name="hdrFaceSize" type="radio" value="16">
-                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-16">16<small class="size-hint d-block"></small></label>
-
-                            <input class="btn-check" id="hdr-size-32" name="hdrFaceSize" type="radio" value="32">
-                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-32">32<small class="size-hint d-block"></small></label>
-
-                            <input class="btn-check" id="hdr-size-64" name="hdrFaceSize" type="radio" value="64">
-                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-64">64<small class="size-hint d-block"></small></label>
-
-                            <input class="btn-check" id="hdr-size-128" name="hdrFaceSize" type="radio" value="128">
-                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-128">128<small class="size-hint d-block"></small></label>
-
-                            <input checked class="btn-check" id="hdr-size-256" name="hdrFaceSize" type="radio" value="256">
-                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-256">256<small class="size-hint d-block"></small></label>
-
-                            <input class="btn-check" id="hdr-size-512" name="hdrFaceSize" type="radio" value="512">
-                            <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-512">512<small class="size-hint d-block"></small></label>
-                        </div>
-                    </fieldset>
-
-                    <h3 class="mt-2">Compression (LDR)</h3>
-                    <fieldset>
-                        <div class="btn-group w-100" role="group">
-                            <input checked class="btn-check" id="fmt-dxt1" name="pixelFormat" type="radio" value="DXT1">
-                            <label class="btn btn-outline-primary" for="fmt-dxt1">DXT1</label>
-
-                            <input class="btn-check" id="fmt-bgr888" name="pixelFormat" type="radio" value="BGR888">
-                            <label class="btn btn-outline-primary" for="fmt-bgr888">BGR888</label>
-
-                            <input class="btn-check" id="fmt-bgr565" name="pixelFormat" type="radio" value="BGR565">
-                            <label class="btn btn-outline-primary" for="fmt-bgr565">BGR565</label>
-                        </div>
-                    </fieldset>
-                </div>
-
-                <div class="settings-area p-3 border rounded bg-light">
-                    <h3>Orientation</h3>
-                    <fieldset>
-                        <div class="btn-group w-100" role="group">
-                            <input checked class="btn-check" id="flip-none" name="flipRows" type="radio" value="false">
-                            <label class="btn btn-outline-primary" for="flip-none">Normal</label>
-
-                            <input class="btn-check" id="flip-vertical" name="flipRows" type="radio" value="true">
-                            <label class="btn btn-outline-primary" for="flip-vertical">Flip rows</label>
-                        </div>
-                    </fieldset>
-
-                    <h3>Back-face fill</h3>
-                    <fieldset>
-                        <div class="btn-group w-100 mb-3" role="group">
-                            <input checked class="btn-check" id="backfill-blur" name="backFill" type="radio" value="blur">
-                            <label class="btn btn-outline-primary btn-sm" for="backfill-blur">Blur</label>
-
-                            <input class="btn-check" id="backfill-color" name="backFill" type="radio" value="color">
-                            <label class="btn btn-outline-primary btn-sm" for="backfill-color">Solid</label>
-
-                            <input class="btn-check" id="backfill-gradient" name="backFill" type="radio" value="gradient">
-                            <label class="btn btn-outline-primary btn-sm" for="backfill-gradient">Gradient</label>
-
-                            <input class="btn-check" id="backfill-matcap" name="backFill" type="radio" value="matcap">
-                            <label class="btn btn-outline-primary btn-sm" for="backfill-matcap">Matcap</label>
-                        </div>
-                    </fieldset>
-
-                    <div id="backColorArea" class="mb-3" style="display: none;">
-                        <label class="form-label small text-muted mb-1">Solid color:</label>
-                        <div class="d-flex align-items-center gap-2">
-                            <input type="color" class="form-control form-control-color" id="backColorPicker" value="#1a1a1a">
-                            <button type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" id="pipetteBtn" title="Pick color with eyedropper">
-                                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                                    <path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"/>
-                                </svg>
-                                <span>Pipette</span>
-                            </button>
-                            <span class="small text-muted font-monospace" id="backColorHex">#1a1a1a</span>
-                        </div>
-                        <div class="d-flex justify-content-between small text-muted mt-2">
-                            <label for="backColorAlpha" class="form-label mb-0">Opacity:</label>
-                            <span><strong id="backColorAlphaVal">100</strong>%</span>
-                        </div>
-                        <input type="range" class="form-range alpha-range" id="backColorAlpha" min="0" max="100" step="1" value="100">
-                    </div>
-
-                    <div id="backGradientArea" class="mb-3" style="display: none;">
-                        <div class="row g-2 mb-2">
-                            <div class="col-6">
-                                <label class="form-label small text-muted mb-1">Color 1 (Center):</label>
-                                <div class="d-flex align-items-center gap-2">
-                                    <input type="color" class="form-control form-control-color" id="gradColor1Picker" value="#0d6efd">
-                                    <button type="button" class="btn btn-sm btn-outline-secondary p-1" id="pipetteGrad1" title="Pick center color">
-                                        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"/></svg>
-                                    </button>
-                                </div>
-                                <div class="d-flex justify-content-between small text-muted mt-1">
-                                    <label for="gradColor1Alpha" class="form-label mb-0">Opacity:</label>
-                                    <span><strong id="gradColor1AlphaVal">100</strong>%</span>
-                                </div>
-                                <input type="range" class="form-range alpha-range" id="gradColor1Alpha" min="0" max="100" step="1" value="100">
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small text-muted mb-1">Color 2 (Rim):</label>
-                                <div class="d-flex align-items-center gap-2">
-                                    <input type="color" class="form-control form-control-color" id="gradColor2Picker" value="#111827">
-                                    <button type="button" class="btn btn-sm btn-outline-secondary p-1" id="pipetteGrad2" title="Pick rim color">
-                                        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"/></svg>
-                                    </button>
-                                </div>
-                                <div class="d-flex justify-content-between small text-muted mt-1">
-                                    <label for="gradColor2Alpha" class="form-label mb-0">Opacity:</label>
-                                    <span><strong id="gradColor2AlphaVal">100</strong>%</span>
-                                </div>
-                                <input type="range" class="form-range alpha-range" id="gradColor2Alpha" min="0" max="100" step="1" value="100">
-                            </div>
-                        </div>
-                        <div class="d-flex justify-content-between small text-muted">
-                            <label for="gradInnerRadius" class="form-label mb-0">Inner circle size:</label>
-                            <span><strong id="gradInnerRadiusVal">50</strong>%</span>
-                        </div>
-                        <input type="range" class="form-range mb-2" id="gradInnerRadius" min="5" max="95" step="1" value="50">
-
-                        <div class="d-flex justify-content-between small text-muted">
-                            <label for="gradSharpness" class="form-label mb-0">Inner circle sharpness:</label>
-                            <span><strong id="gradSharpnessVal">0</strong>%</span>
-                        </div>
-                        <input type="range" class="form-range" id="gradSharpness" min="0" max="100" step="1" value="0">
-                    </div>
-
-                    <div id="backMatcapArea" class="mb-3" style="display: none;">
-                        <div class="d-flex align-items-center gap-3 mb-2">
-                            <div id="backMatcapSlotHost"></div>
-                        </div>
-                        <div id="backFitHost" class="mb-2"></div>
-                        <div class="d-flex justify-content-between small text-muted">
-                            <label for="backMatcapScale" class="form-label mb-0">Back scale:</label>
-                            <span><strong id="backMatcapScaleVal">1.00</strong>×</span>
-                        </div>
-                        <input type="range" class="form-range mb-2" id="backMatcapScale" min="0.5" max="3.0" step="0.01" value="1.0">
-                        <div class="d-flex justify-content-between small text-muted">
-                            <label for="backRimAngle" class="form-label mb-0">Back rim angle:</label>
-                            <span><strong id="backRimAngleVal">90</strong>°</span>
-                        </div>
-                        <input type="range" class="form-range" id="backRimAngle" min="90" max="180" step="1" value="90">
-                        <div class="small text-muted">The back matcap is centered on the point behind the sphere. Raise the angle to spread it further around without stretching; use Coverage (&gt;1 when the main Rim angle is 180°) to set how far the patch reaches.</div>
-                    </div>
-
-                    <div id="backBoundaryControls" class="pt-2 border-top">
-                        <div class="d-flex justify-content-between small text-muted">
-                            <label for="backRadius" class="form-label mb-0">Coverage (Radius):</label>
-                            <span><strong id="backRadiusVal">1.00</strong>×</span>
-                        </div>
-                        <input type="range" class="form-range mb-2" id="backRadius" min="0.1" max="1.8" step="0.01" value="1.0">
-
-                        <div class="d-flex justify-content-between small text-muted">
-                            <label for="backEdgeSharpness" class="form-label mb-0">Edge sharpness:</label>
-                            <span><strong id="backEdgeSharpnessVal">25</strong>%</span>
-                        </div>
-                        <input type="range" class="form-range" id="backEdgeSharpness" min="0" max="100" step="1" value="25">
-                    </div>
-                </div>
-
-                <div class="settings-area p-3 border rounded bg-light">
-                    <h3>Overall softness</h3>
-                    <fieldset>
-                        <div class="d-flex justify-content-between small text-muted">
-                            <label for="globalSoftness" class="form-label mb-0">Softness:</label>
-                            <span><strong id="globalSoftnessVal">0</strong>%</span>
-                        </div>
-                        <input type="range" class="form-range" id="globalSoftness" min="0" max="100" step="1" value="0">
-                    </fieldset>
-                </div>
-
-                <div class="settings-area p-3 border rounded bg-light">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h3 class="mb-0">Rotation</h3>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="resetRotation">Reset</button>
-                    </div>
-                    <fieldset>
-                        <div class="ball-controller-wrap" id="ballController">
-                            <div class="ball-handle" id="ballHandle"></div>
-                        </div>
-
-                        <div class="d-flex flex-column gap-1">
-                            <div>
-                                <div class="d-flex justify-content-between small text-muted">
-                                    <label for="rotX" class="form-label mb-0">Pitch (X):</label>
-                                    <span><strong id="rotXVal">0</strong>°</span>
-                                </div>
-                                <input type="range" class="form-range" id="rotX" min="-180" max="180" value="0">
-                            </div>
-                            <div>
-                                <div class="d-flex justify-content-between small text-muted">
-                                    <label for="rotY" class="form-label mb-0">Yaw (Y):</label>
-                                    <span><strong id="rotYVal">0</strong>°</span>
-                                </div>
-                                <input type="range" class="form-range" id="rotY" min="-180" max="180" value="0">
-                            </div>
-                            <div>
-                                <div class="d-flex justify-content-between small text-muted">
-                                    <label for="rotZ" class="form-label mb-0">Roll (Z):</label>
-                                    <span><strong id="rotZVal">0</strong>°</span>
-                                </div>
-                                <input type="range" class="form-range" id="rotZ" min="-180" max="180" value="0">
-                            </div>
-                        </div>
-                    </fieldset>
-                </div>
-
-                <div class="settings-area p-3 border rounded bg-light">
-                    <h3>Scale</h3>
-                    <fieldset>
-                        <div class="d-flex justify-content-between small text-muted">
-                            <span><strong id="matcapScaleVal">1.00</strong>×</span>
-                        </div>
-                        <input type="range" class="form-range" id="matcapScale" min="0.9" max="3.0" step="0.01" value="1.0">
-                    </fieldset>
-                </div>
-
-                <div class="settings-area p-3 border rounded bg-light">
-                    <h3>Rim / edge handling</h3>
-                    <fieldset>
-                        <div class="d-flex justify-content-between small text-muted">
-                            <label for="rimAngle" class="form-label mb-0">Rim angle (sphere coverage):</label>
-                            <span><strong id="rimAngleVal">90</strong>°</span>
-                        </div>
-                        <input type="range" class="form-range" id="rimAngle" min="90" max="180" step="1" value="90">
-                        <div class="d-flex justify-content-between small text-muted mt-2">
-                            <label for="rimBlur" class="form-label mb-0">Rim softening:</label>
-                            <span><strong id="rimBlurVal">50</strong>%</span>
-                        </div>
-                        <input type="range" class="form-range" id="rimBlur" min="0" max="100" step="1" value="50">
-                    </fieldset>
-                </div>
-
-                <div class="settings-area p-3 border rounded bg-light">
-                    <h3>Animated cubemap</h3>
-
-                    <label class="form-label small text-muted mb-1">Rotation axis:</label>
-                    <div class="btn-group w-100 mb-2" role="group">
-                        <input checked class="btn-check" id="anim-axis-y" name="animAxis" type="radio" value="y">
-                        <label class="btn btn-outline-primary btn-sm" for="anim-axis-y">Yaw (Y)</label>
-                        <!--
-                        <input class="btn-check" id="anim-axis-x" name="animAxis" type="radio" value="x">
-                        <label class="btn btn-outline-primary btn-sm" for="anim-axis-x">Pitch (X)</label>
-
-                        <input class="btn-check" id="anim-axis-z" name="animAxis" type="radio" value="z">
-                        <label class="btn btn-outline-primary btn-sm" for="anim-axis-z">Roll (Z)</label>
-                        -->
-                        <input class="btn-check" id="anim-axis-grid" name="animAxis" type="radio" value="grid">
-                        <label class="btn btn-outline-primary btn-sm" for="anim-axis-grid">Yaw+Pitch</label>
-                    </div>
-
-                    <div class="mb-2" id="animGridOpts" style="display:none">
-                        <div class="d-flex justify-content-between small text-muted">
-                            <label for="animPitchMax" class="form-label mb-0">Look up/down limit:</label>
-                            <span><strong id="animPitchMaxVal">60</strong>°</span>
-                        </div>
-                        <input type="range" class="form-range" id="animPitchMax" min="15" max="89" step="1" value="60">
-
-                        <div class="d-flex justify-content-between small text-muted">
-                            <label for="animPitchFrames" class="form-label mb-0">Pitch frames:</label>
-                            <span><strong id="animPitchFramesVal">9</strong></span>
-                        </div>
-                        <input type="range" class="form-range" id="animPitchFrames" min="2" max="25" step="1" value="9">
-                        <div class="small text-muted mb-1" id="animPitchInfo"></div>
-
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="animPitchInvert">
-                            <label class="form-check-label small" for="animPitchInvert">Invert pitch direction</label>
-                        </div>
-                    </div>
-
-                    <div class="mb-2">
-                        <div class="d-flex justify-content-between small text-muted">
-                            <label for="animFrames" class="form-label mb-0">Frames:</label>
-                            <span><strong id="animFramesVal">24</strong></span>
-                        </div>
-                        <input type="range" class="form-range" id="animFrames" min="0" max="20" step="1" value="10">
-                        <div class="small text-muted" id="animStep"></div>
-                    </div>
-
-                    <div class="form-check mb-1">
-                        <input class="form-check-input" type="checkbox" id="animReverse">
-                        <label class="form-check-label small" for="animReverse">Reverse rotation direction</label>
-                    </div>
-
-                    <div class="form-check mb-2">
-                        <input checked class="form-check-input" type="checkbox" id="animIncludeHdr">
-                        <label class="form-check-label small" for="animIncludeHdr">Include HDR (.hdr.vtf) in zip</label>
-                    </div>
-
-                    <div class="form-check mb-2">
-                        <input class="form-check-input" type="checkbox" id="animIncludeExamples">
-                        <label class="form-check-label small" for="animIncludeExamples">Include VMT example in zip</label>
-                    </div>
-
-                    <div class="small mb-2"><a href="https://steamcommunity.com/sharedfiles/filedetails/?id=3815638045" target="_blank" rel="noopener">Lua proxy addon</a></div>
-
-                    <div class="d-flex gap-2">
-                        <button type="button" class="btn btn-outline-primary btn-sm flex-fill" id="dlAnimPack" disabled>Download pack (.zip)</button>
-                        <button type="button" class="btn btn-outline-warning btn-sm flex-fill" id="dlAnimHdr" disabled>Download .hdr.vtf</button>
-                    </div>
-                    <div class="small text-muted mt-1" id="animStatus"></div>
-                </div>
-
-                <div class="sidebar-actions">
-                    <button class="btn btn-primary btn-lg w-100" id="generateBtn" disabled>Generate</button>
-                </div>
-            </aside>
-
-            <main class="app-main" id="appMain">
-                <div class="main-placeholder" id="mainPlaceholder" role="button" tabindex="0">Drop or click to load a base matcap or a .vtf cubemap</div>
-
-                <div id="resultArea" style="display:none">
-                    <output id="facesOutput">
-                        <div class="env-cell" id="envSphereWrap">
-                            <canvas id="envSphereCanvas" width="300" height="300"></canvas>
-                            <span class="env-bar"><button type="button" class="env-link" id="envSphereFs" title="Open full screen">env sphere</button></span>
-                        </div>
-                    </output>
-
-                    <div class="d-flex gap-2 justify-content-center flex-wrap mt-3 mb-3">
-                        <button class="btn btn-success" id="dlVtf">Download .vtf</button>
-                        <button class="btn btn-outline-warning" id="dlVtfHdr">Download .hdr.vtf</button>
-                        <button class="btn btn-outline-secondary" id="dlPngZip">Download 6 faces (.zip)</button>
-                    </div>
-                </div>
-            </main>
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <link
+      crossorigin="anonymous"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+      rel="stylesheet"
+    />
+    <link rel="icon" type="image/x-icon" href="../styles/dih.ico" />
+    <link href="../styles/style.css" rel="stylesheet" />
+    <link href="../styles/foundation-icons.css" rel="stylesheet" />
+    <title>DIH - Matcap to EnvMap</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+      body {
+        margin: 0;
+      }
+      .app-shell {
+        display: flex;
+        align-items: stretch;
+        height: 100vh;
+      }
+      .app-sidebar {
+        flex: 0 0 380px;
+        width: 380px;
+        height: 100%;
+        overflow-y: auto;
+        padding: 20px;
+        border-right: 1px solid #dee2e6;
+        background: #fff;
+        text-align: left;
+      }
+      .app-sidebar h2 {
+        font-size: 1.3rem;
+      }
+      .app-sidebar .settings-area {
+        margin-bottom: 14px;
+      }
+      .app-sidebar .settings-area h3 {
+        font-size: 1rem;
+        margin-top: 10px;
+        margin-bottom: 8px;
+      }
+      .app-sidebar .settings-area h3:first-child,
+      .app-sidebar .settings-area > div:first-child > h3 {
+        margin-top: 0;
+      }
+      .sidebar-actions {
+        position: sticky;
+        bottom: 0;
+        background: #fff;
+        padding-top: 10px;
+        margin-top: 6px;
+        z-index: 10;
+      }
+      .app-main {
+        flex: 1;
+        min-width: 0;
+        height: 100%;
+        padding: 32px 24px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .app-main > * {
+        width: 100%;
+        max-width: 760px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      .main-placeholder {
+        flex: 1;
+        max-width: none;
+        margin: 0;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        border: 2px dashed #ced4da;
+        border-radius: 12px;
+        color: #868e96;
+        font-size: 15px;
+        cursor: pointer;
+        transition:
+          border-color 0.15s,
+          color 0.15s,
+          background 0.15s;
+      }
+      .main-placeholder:hover,
+      .main-placeholder:focus-visible,
+      .main-placeholder.dragover {
+        border-color: #286090;
+        color: #286090;
+        background: #f3f7fb;
+        outline: none;
+      }
+      .slot-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+      .slot {
+        position: relative;
+        width: 64px;
+        height: 64px;
+        flex: none;
+        border-radius: 8px;
+        border: 1px dashed #adb5bd;
+        background: #e9ecef;
+        cursor: pointer;
+        overflow: hidden;
+      }
+      .slot.slot-lg {
+        width: 80px;
+        height: 80px;
+      }
+      .slot::before {
+        content: "+";
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        color: #868e96;
+      }
+      .slot canvas {
+        display: none;
+        width: 100%;
+        height: 100%;
+      }
+      .slot.filled {
+        border: 1px solid #dee2e6;
+        background: #1a1a2e;
+      }
+      .slot.filled::before {
+        content: none;
+      }
+      .slot.filled canvas {
+        display: block;
+      }
+      .slot:hover,
+      .slot:focus-visible,
+      .slot.dragover {
+        border-color: #286090;
+        outline: none;
+      }
+      .slot.dragover {
+        background: #dbe7f3;
+      }
+      .slot-clear {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        border: 0;
+        border-radius: 50%;
+        background: rgba(0, 0, 0, 0.65);
+        color: #fff;
+        font-size: 13px;
+        line-height: 18px;
+        text-align: center;
+        cursor: pointer;
+        display: none;
+      }
+      .slot.filled:hover .slot-clear,
+      .slot.filled:focus-within .slot-clear {
+        display: block;
+      }
+      .slot-caption {
+        font-size: 0.75rem;
+        color: #6c757d;
+      }
+      .fit-panel summary {
+        cursor: pointer;
+        font-size: 0.8rem;
+        color: #495057;
+        user-select: none;
+      }
+      .fit-panel .form-range {
+        margin-bottom: 2px;
+      }
+      .base-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .base-info {
+        min-width: 0;
+        font-size: 0.85rem;
+      }
+      .base-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 600;
+      }
+      .base-dims {
+        color: #6c757d;
+      }
+      .slider-row + .slider-row {
+        margin-top: 4px;
+      }
+      .env-off {
+        opacity: 0.35;
+        pointer-events: none;
+      }
+      .section-title {
+        font-size: 1rem;
+        margin: 16px 0 6px;
+      }
+      @media (max-width: 900px) {
+        html,
+        body {
+          height: auto;
+          overflow: visible;
+        }
+        .app-shell {
+          height: auto;
+          flex-direction: column;
+        }
+        .app-sidebar {
+          width: 100%;
+          flex: none;
+          height: auto;
+          max-height: none;
+          overflow-y: visible;
+          border-right: none;
+          border-bottom: 1px solid #dee2e6;
+        }
+        .sidebar-actions {
+          position: static;
+        }
+        .app-main {
+          height: auto;
+          overflow-y: visible;
+        }
+        .main-placeholder {
+          min-height: 60vh;
+          flex: none;
+        }
+      }
+      #resultArea {
+        max-width: none;
+      }
+      #facesOutput {
+        display: grid;
+        grid-template-columns: repeat(4, var(--cell, 170px));
+        justify-content: center;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      #facesOutput .face-cell {
+        text-align: center;
+      }
+      .face-cell[data-face="nx"] {
+        grid-column: 1;
+        grid-row: 2;
+      }
+      .face-cell[data-face="pz"] {
+        grid-column: 2;
+        grid-row: 2;
+      }
+      .face-cell[data-face="px"] {
+        grid-column: 3;
+        grid-row: 2;
+      }
+      .face-cell[data-face="nz"] {
+        grid-column: 4;
+        grid-row: 2;
+      }
+      .face-cell[data-face="py"] {
+        grid-column: 3;
+        grid-row: 1;
+      }
+      .face-cell[data-face="matcap"] {
+        grid-column: 1;
+        grid-row: 1;
+      }
+      .face-cell[data-face="ny"] {
+        grid-column: 3;
+        grid-row: 3;
+      }
+      #facesOutput canvas {
+        display: block;
+        width: 100%;
+        border-radius: 6px;
+        background: #000;
+      }
+      #facesOutput .face-cell[data-face="py"] canvas {
+        transform: rotate(90deg);
+      }
+      #facesOutput .face-cell[data-face="ny"] canvas {
+        transform: rotate(-90deg);
+      }
+      #facesOutput span {
+        display: block;
+        font-size: 12px;
+        color: #888;
+        margin-top: 4px;
+      }
+      #facesOutput .env-cell {
+        grid-column: 2;
+        grid-row: 1;
+        text-align: center;
+        position: relative;
+      }
+      #facesOutput #envSphereCanvas {
+        display: block;
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        border-radius: 6px;
+        background: #fff;
+        border: 1px solid rgba(128, 128, 128, 0.35);
+        box-sizing: border-box;
+        cursor: grab;
+        touch-action: none;
+      }
+      #facesOutput #envSphereCanvas.dragging {
+        cursor: grabbing;
+      }
+      #facesOutput .env-bar {
+        display: block;
+        margin-top: 4px;
+      }
+      .env-link {
+        border: 0;
+        background: none;
+        padding: 0;
+        font-size: 12px;
+        color: #0d6efd;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      .env-link:hover {
+        color: #0a58ca;
+      }
+      #facesOutput .env-cell.env-full {
+        position: fixed;
+        inset: 0;
+        z-index: 3000;
+        background: #fff;
+        margin: 0;
+      }
+      #facesOutput .env-cell.env-full #envSphereCanvas {
+        width: 100%;
+        height: 100%;
+        aspect-ratio: auto;
+        border: 0;
+        border-radius: 0;
+      }
+      #facesOutput .env-cell.env-full .env-bar {
+        position: absolute;
+        top: 14px;
+        right: 18px;
+        margin: 0;
+      }
+      #facesOutput .env-cell.env-full .env-link {
+        font-size: 16px;
+        padding: 6px 14px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.9);
+        border: 1px solid #0d6efd;
+        text-decoration: none;
+      }
+      .btn-group > .size-btn {
+        flex: 1 1 0;
+        min-width: 0;
+        padding-left: 0;
+        padding-right: 0;
+      }
+      .size-hint {
+        font-size: 0.62rem;
+        font-weight: 400;
+        line-height: 1.1;
+        opacity: 0.8;
+        white-space: nowrap;
+      }
+      .ball-controller-wrap {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 35%, #ffffff 0%, #e2e8f0 40%, #94a3b8 100%);
+        border: 2px solid #0d6efd;
+        position: relative;
+        margin: 4px auto 8px auto;
+        cursor: crosshair;
+        box-shadow:
+          inset -2px -2px 6px rgba(0, 0, 0, 0.2),
+          0 2px 5px rgba(0, 0, 0, 0.1);
+        user-select: none;
+        touch-action: none;
+      }
+      .ball-handle {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background-color: #dc3545;
+        border: 2px solid #ffffff;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+      }
+      .app-sidebar,
+      .app-main {
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .app-sidebar input[type="text"] {
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      canvas,
+      img {
+        -webkit-user-drag: none;
+        user-drag: none;
+      }
+      :root {
+        --checker: repeating-conic-gradient(#c9c9c9 0% 25%, #ffffff 0% 50%) 50% / 10px 10px;
+      }
+      .alpha-range::-webkit-slider-runnable-track {
+        height: 0.9rem;
+        border-radius: 0.45rem;
+        border: 1px solid #ced4da;
+        background: linear-gradient(to right, transparent, var(--alpha-color, #000)), var(--checker);
+      }
+      .alpha-range::-moz-range-track {
+        height: 0.9rem;
+        border-radius: 0.45rem;
+        border: 1px solid #ced4da;
+        background: linear-gradient(to right, transparent, var(--alpha-color, #000)), var(--checker);
+      }
+      .alpha-range::-webkit-slider-thumb {
+        margin-top: -0.2rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="app-sidebar">
+        <div id="drop-area">
+          <h2>Matcap → EnvMap</h2>
         </div>
 
-        <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
-        <script crossorigin="anonymous" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-        <script src="../styles/script.js"></script>
-        <script src="script.js"></script>
-    </body>
+        <div class="settings-area p-3 border rounded bg-light">
+          <h3>Base matcap / VTF envmap</h3>
+          <div class="base-row">
+            <div id="baseSlotHost"></div>
+            <div class="base-info" id="baseInfo" hidden>
+              <div class="base-name" id="baseName"></div>
+              <div class="base-dims" id="baseDims"></div>
+              <button type="button" class="btn btn-sm btn-outline-danger mt-1" id="clearBaseBtn">
+                Clear
+              </button>
+            </div>
+          </div>
+          <div id="baseFitHost"></div>
+        </div>
+
+        <h3 class="section-title">Extra matcap layers</h3>
+        <div id="layersContainer"></div>
+        <button type="button" class="btn btn-outline-primary btn-sm w-100 mb-3" id="addLayerBtn">
+          + Add layer
+        </button>
+
+        <label for="matPath" class="form-label mb-1">File name</label>
+        <input class="form-control mb-3" id="matPath" type="text" value="material" placeholder="material" />
+
+        <div class="settings-area p-3 border rounded bg-light">
+          <h3>Face size (LDR)</h3>
+          <fieldset>
+            <div class="btn-group w-100" role="group">
+              <input class="btn-check" id="size-16" name="faceSize" type="radio" value="16" />
+              <label class="btn btn-outline-primary px-1 size-btn" for="size-16"
+                >16<small class="size-hint d-block"></small
+              ></label>
+
+              <input class="btn-check" id="size-32" name="faceSize" type="radio" value="32" />
+              <label class="btn btn-outline-primary px-1 size-btn" for="size-32"
+                >32<small class="size-hint d-block"></small
+              ></label>
+
+              <input class="btn-check" id="size-64" name="faceSize" type="radio" value="64" />
+              <label class="btn btn-outline-primary px-1 size-btn" for="size-64"
+                >64<small class="size-hint d-block"></small
+              ></label>
+
+              <input class="btn-check" id="size-128" name="faceSize" type="radio" value="128" />
+              <label class="btn btn-outline-primary px-1 size-btn" for="size-128"
+                >128<small class="size-hint d-block"></small
+              ></label>
+
+              <input class="btn-check" id="size-256" name="faceSize" type="radio" value="256" />
+              <label class="btn btn-outline-primary px-1 size-btn" for="size-256"
+                >256<small class="size-hint d-block"></small
+              ></label>
+
+              <input checked class="btn-check" id="size-512" name="faceSize" type="radio" value="512" />
+              <label class="btn btn-outline-primary px-1 size-btn" for="size-512"
+                >512<small class="size-hint d-block"></small
+              ></label>
+            </div>
+          </fieldset>
+
+          <h3 class="mt-2">HDR Face size</h3>
+          <fieldset>
+            <div class="btn-group w-100" role="group">
+              <input class="btn-check" id="hdr-size-16" name="hdrFaceSize" type="radio" value="16" />
+              <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-16"
+                >16<small class="size-hint d-block"></small
+              ></label>
+
+              <input class="btn-check" id="hdr-size-32" name="hdrFaceSize" type="radio" value="32" />
+              <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-32"
+                >32<small class="size-hint d-block"></small
+              ></label>
+
+              <input class="btn-check" id="hdr-size-64" name="hdrFaceSize" type="radio" value="64" />
+              <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-64"
+                >64<small class="size-hint d-block"></small
+              ></label>
+
+              <input class="btn-check" id="hdr-size-128" name="hdrFaceSize" type="radio" value="128" />
+              <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-128"
+                >128<small class="size-hint d-block"></small
+              ></label>
+
+              <input
+                checked
+                class="btn-check"
+                id="hdr-size-256"
+                name="hdrFaceSize"
+                type="radio"
+                value="256"
+              />
+              <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-256"
+                >256<small class="size-hint d-block"></small
+              ></label>
+
+              <input class="btn-check" id="hdr-size-512" name="hdrFaceSize" type="radio" value="512" />
+              <label class="btn btn-outline-warning px-1 size-btn" for="hdr-size-512"
+                >512<small class="size-hint d-block"></small
+              ></label>
+            </div>
+          </fieldset>
+
+          <h3 class="mt-2">Compression (LDR)</h3>
+          <fieldset>
+            <div class="btn-group w-100" role="group">
+              <input checked class="btn-check" id="fmt-dxt1" name="pixelFormat" type="radio" value="DXT1" />
+              <label class="btn btn-outline-primary" for="fmt-dxt1">DXT1</label>
+
+              <input class="btn-check" id="fmt-bgr888" name="pixelFormat" type="radio" value="BGR888" />
+              <label class="btn btn-outline-primary" for="fmt-bgr888">BGR888</label>
+
+              <input class="btn-check" id="fmt-bgr565" name="pixelFormat" type="radio" value="BGR565" />
+              <label class="btn btn-outline-primary" for="fmt-bgr565">BGR565</label>
+            </div>
+          </fieldset>
+        </div>
+
+        <div class="settings-area p-3 border rounded bg-light">
+          <h3>Orientation</h3>
+          <fieldset>
+            <div class="btn-group w-100" role="group">
+              <input checked class="btn-check" id="flip-none" name="flipRows" type="radio" value="false" />
+              <label class="btn btn-outline-primary" for="flip-none">Normal</label>
+
+              <input class="btn-check" id="flip-vertical" name="flipRows" type="radio" value="true" />
+              <label class="btn btn-outline-primary" for="flip-vertical">Flip rows</label>
+            </div>
+          </fieldset>
+
+          <h3>Back-face fill</h3>
+          <fieldset>
+            <div class="btn-group w-100 mb-3" role="group">
+              <input checked class="btn-check" id="backfill-blur" name="backFill" type="radio" value="blur" />
+              <label class="btn btn-outline-primary btn-sm" for="backfill-blur">Blur</label>
+
+              <input class="btn-check" id="backfill-color" name="backFill" type="radio" value="color" />
+              <label class="btn btn-outline-primary btn-sm" for="backfill-color">Solid</label>
+
+              <input class="btn-check" id="backfill-gradient" name="backFill" type="radio" value="gradient" />
+              <label class="btn btn-outline-primary btn-sm" for="backfill-gradient">Gradient</label>
+
+              <input class="btn-check" id="backfill-matcap" name="backFill" type="radio" value="matcap" />
+              <label class="btn btn-outline-primary btn-sm" for="backfill-matcap">Matcap</label>
+            </div>
+          </fieldset>
+
+          <div id="backColorArea" class="mb-3" style="display: none">
+            <label class="form-label small text-muted mb-1">Solid color:</label>
+            <div class="d-flex align-items-center gap-2">
+              <input
+                type="color"
+                class="form-control form-control-color"
+                id="backColorPicker"
+                value="#1a1a1a"
+              />
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1"
+                id="pipetteBtn"
+                title="Pick color with eyedropper"
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                  <path
+                    d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"
+                  />
+                </svg>
+                <span>Pipette</span>
+              </button>
+              <span class="small text-muted font-monospace" id="backColorHex">#1a1a1a</span>
+            </div>
+            <div class="d-flex justify-content-between small text-muted mt-2">
+              <label for="backColorAlpha" class="form-label mb-0">Opacity:</label>
+              <span><strong id="backColorAlphaVal">100</strong>%</span>
+            </div>
+            <input
+              type="range"
+              class="form-range alpha-range"
+              id="backColorAlpha"
+              min="0"
+              max="100"
+              step="1"
+              value="100"
+            />
+          </div>
+
+          <div id="backGradientArea" class="mb-3" style="display: none">
+            <div class="row g-2 mb-2">
+              <div class="col-6">
+                <label class="form-label small text-muted mb-1">Color 1 (Center):</label>
+                <div class="d-flex align-items-center gap-2">
+                  <input
+                    type="color"
+                    class="form-control form-control-color"
+                    id="gradColor1Picker"
+                    value="#0d6efd"
+                  />
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary p-1"
+                    id="pipetteGrad1"
+                    title="Pick center color"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                      <path
+                        d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div class="d-flex justify-content-between small text-muted mt-1">
+                  <label for="gradColor1Alpha" class="form-label mb-0">Opacity:</label>
+                  <span><strong id="gradColor1AlphaVal">100</strong>%</span>
+                </div>
+                <input
+                  type="range"
+                  class="form-range alpha-range"
+                  id="gradColor1Alpha"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value="100"
+                />
+              </div>
+              <div class="col-6">
+                <label class="form-label small text-muted mb-1">Color 2 (Rim):</label>
+                <div class="d-flex align-items-center gap-2">
+                  <input
+                    type="color"
+                    class="form-control form-control-color"
+                    id="gradColor2Picker"
+                    value="#111827"
+                  />
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary p-1"
+                    id="pipetteGrad2"
+                    title="Pick rim color"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                      <path
+                        d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146A.5.5 0 0 0 1 12.5v2a.5.5 0 0 0 .354-.146L11 7.707l1.146 1.147a.5.5 0 0 0 .708-.708l-.647-.646 3.147-3.146a1.207 1.207 0 0 0 0-1.708l-2-2zM2 12.707l7-7L10.293 7l-7 7H2v-1.293z"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div class="d-flex justify-content-between small text-muted mt-1">
+                  <label for="gradColor2Alpha" class="form-label mb-0">Opacity:</label>
+                  <span><strong id="gradColor2AlphaVal">100</strong>%</span>
+                </div>
+                <input
+                  type="range"
+                  class="form-range alpha-range"
+                  id="gradColor2Alpha"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value="100"
+                />
+              </div>
+            </div>
+            <div class="d-flex justify-content-between small text-muted">
+              <label for="gradInnerRadius" class="form-label mb-0">Inner circle size:</label>
+              <span><strong id="gradInnerRadiusVal">50</strong>%</span>
+            </div>
+            <input
+              type="range"
+              class="form-range mb-2"
+              id="gradInnerRadius"
+              min="5"
+              max="95"
+              step="1"
+              value="50"
+            />
+
+            <div class="d-flex justify-content-between small text-muted">
+              <label for="gradSharpness" class="form-label mb-0">Inner circle sharpness:</label>
+              <span><strong id="gradSharpnessVal">0</strong>%</span>
+            </div>
+            <input type="range" class="form-range" id="gradSharpness" min="0" max="100" step="1" value="0" />
+          </div>
+
+          <div id="backMatcapArea" class="mb-3" style="display: none">
+            <div class="d-flex align-items-center gap-3 mb-2">
+              <div id="backMatcapSlotHost"></div>
+            </div>
+            <div id="backFitHost" class="mb-2"></div>
+            <div class="d-flex justify-content-between small text-muted">
+              <label for="backMatcapScale" class="form-label mb-0">Back scale:</label>
+              <span><strong id="backMatcapScaleVal">1.00</strong>×</span>
+            </div>
+            <input
+              type="range"
+              class="form-range mb-2"
+              id="backMatcapScale"
+              min="0.5"
+              max="3.0"
+              step="0.01"
+              value="1.0"
+            />
+            <div class="d-flex justify-content-between small text-muted">
+              <label for="backRimAngle" class="form-label mb-0">Back rim angle:</label>
+              <span><strong id="backRimAngleVal">90</strong>°</span>
+            </div>
+            <input type="range" class="form-range" id="backRimAngle" min="90" max="180" step="1" value="90" />
+            <div class="small text-muted">
+              The back matcap is centered on the point behind the sphere. Raise the angle to spread it further
+              around without stretching; use Coverage (&gt;1 when the main Rim angle is 180°) to set how far
+              the patch reaches.
+            </div>
+          </div>
+
+          <div id="backBoundaryControls" class="pt-2 border-top">
+            <div class="d-flex justify-content-between small text-muted">
+              <label for="backRadius" class="form-label mb-0">Coverage (Radius):</label>
+              <span><strong id="backRadiusVal">1.00</strong>×</span>
+            </div>
+            <input
+              type="range"
+              class="form-range mb-2"
+              id="backRadius"
+              min="0.1"
+              max="1.8"
+              step="0.01"
+              value="1.0"
+            />
+
+            <div class="d-flex justify-content-between small text-muted">
+              <label for="backEdgeSharpness" class="form-label mb-0">Edge sharpness:</label>
+              <span><strong id="backEdgeSharpnessVal">25</strong>%</span>
+            </div>
+            <input
+              type="range"
+              class="form-range"
+              id="backEdgeSharpness"
+              min="0"
+              max="100"
+              step="1"
+              value="25"
+            />
+          </div>
+        </div>
+
+        <div class="settings-area p-3 border rounded bg-light">
+          <h3>Overall softness</h3>
+          <fieldset>
+            <div class="d-flex justify-content-between small text-muted">
+              <label for="globalSoftness" class="form-label mb-0">Softness:</label>
+              <span><strong id="globalSoftnessVal">0</strong>%</span>
+            </div>
+            <input type="range" class="form-range" id="globalSoftness" min="0" max="100" step="1" value="0" />
+          </fieldset>
+        </div>
+
+        <div class="settings-area p-3 border rounded bg-light">
+          <div class="d-flex justify-content-between align-items-center">
+            <h3 class="mb-0">Rotation</h3>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="resetRotation">Reset</button>
+          </div>
+          <fieldset>
+            <div class="ball-controller-wrap" id="ballController">
+              <div class="ball-handle" id="ballHandle"></div>
+            </div>
+
+            <div class="d-flex flex-column gap-1">
+              <div>
+                <div class="d-flex justify-content-between small text-muted">
+                  <label for="rotX" class="form-label mb-0">Pitch (X):</label>
+                  <span><strong id="rotXVal">0</strong>°</span>
+                </div>
+                <input type="range" class="form-range" id="rotX" min="-180" max="180" value="0" />
+              </div>
+              <div>
+                <div class="d-flex justify-content-between small text-muted">
+                  <label for="rotY" class="form-label mb-0">Yaw (Y):</label>
+                  <span><strong id="rotYVal">0</strong>°</span>
+                </div>
+                <input type="range" class="form-range" id="rotY" min="-180" max="180" value="0" />
+              </div>
+              <div>
+                <div class="d-flex justify-content-between small text-muted">
+                  <label for="rotZ" class="form-label mb-0">Roll (Z):</label>
+                  <span><strong id="rotZVal">0</strong>°</span>
+                </div>
+                <input type="range" class="form-range" id="rotZ" min="-180" max="180" value="0" />
+              </div>
+            </div>
+          </fieldset>
+        </div>
+
+        <div class="settings-area p-3 border rounded bg-light">
+          <h3>Scale</h3>
+          <fieldset>
+            <div class="d-flex justify-content-between small text-muted">
+              <span><strong id="matcapScaleVal">1.00</strong>×</span>
+            </div>
+            <input
+              type="range"
+              class="form-range"
+              id="matcapScale"
+              min="0.9"
+              max="3.0"
+              step="0.01"
+              value="1.0"
+            />
+          </fieldset>
+        </div>
+
+        <div class="settings-area p-3 border rounded bg-light">
+          <h3>Rim / edge handling</h3>
+          <fieldset>
+            <div class="d-flex justify-content-between small text-muted">
+              <label for="rimAngle" class="form-label mb-0">Rim angle (sphere coverage):</label>
+              <span><strong id="rimAngleVal">90</strong>°</span>
+            </div>
+            <input type="range" class="form-range" id="rimAngle" min="90" max="180" step="1" value="90" />
+            <div class="d-flex justify-content-between small text-muted mt-2">
+              <label for="rimBlur" class="form-label mb-0">Rim softening:</label>
+              <span><strong id="rimBlurVal">50</strong>%</span>
+            </div>
+            <input type="range" class="form-range" id="rimBlur" min="0" max="100" step="1" value="50" />
+          </fieldset>
+        </div>
+
+        <div class="settings-area p-3 border rounded bg-light">
+          <h3>Animated cubemap</h3>
+
+          <label class="form-label small text-muted mb-1">Rotation axis:</label>
+          <div class="btn-group w-100 mb-2" role="group">
+            <input checked class="btn-check" id="anim-axis-y" name="animAxis" type="radio" value="y" />
+            <label class="btn btn-outline-primary btn-sm" for="anim-axis-y">Yaw (Y)</label>
+
+            <input class="btn-check" id="anim-axis-grid" name="animAxis" type="radio" value="grid" />
+            <label class="btn btn-outline-primary btn-sm" for="anim-axis-grid">Yaw+Pitch</label>
+          </div>
+
+          <div class="mb-2" id="animGridOpts" style="display: none">
+            <div class="d-flex justify-content-between small text-muted">
+              <label for="animPitchMax" class="form-label mb-0">Look up/down limit:</label>
+              <span><strong id="animPitchMaxVal">60</strong>°</span>
+            </div>
+            <input type="range" class="form-range" id="animPitchMax" min="15" max="89" step="1" value="60" />
+
+            <div class="d-flex justify-content-between small text-muted">
+              <label for="animPitchFrames" class="form-label mb-0">Pitch frames:</label>
+              <span><strong id="animPitchFramesVal">9</strong></span>
+            </div>
+            <input type="range" class="form-range" id="animPitchFrames" min="2" max="25" step="1" value="9" />
+            <div class="small text-muted mb-1" id="animPitchInfo"></div>
+
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="animPitchInvert" />
+              <label class="form-check-label small" for="animPitchInvert">Invert pitch direction</label>
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <div class="d-flex justify-content-between small text-muted">
+              <label for="animFrames" class="form-label mb-0">Frames:</label>
+              <span><strong id="animFramesVal">24</strong></span>
+            </div>
+            <input type="range" class="form-range" id="animFrames" min="0" max="20" step="1" value="10" />
+            <div class="small text-muted" id="animStep"></div>
+          </div>
+
+          <div class="form-check mb-1">
+            <input class="form-check-input" type="checkbox" id="animReverse" />
+            <label class="form-check-label small" for="animReverse">Reverse rotation direction</label>
+          </div>
+
+          <div class="form-check mb-2">
+            <input checked class="form-check-input" type="checkbox" id="animIncludeHdr" />
+            <label class="form-check-label small" for="animIncludeHdr">Include HDR (.hdr.vtf) in zip</label>
+          </div>
+
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="animIncludeExamples" />
+            <label class="form-check-label small" for="animIncludeExamples">Include VMT example in zip</label>
+          </div>
+
+          <div class="small mb-2">
+            <a
+              href="https://steamcommunity.com/sharedfiles/filedetails/?id=3815638045"
+              target="_blank"
+              rel="noopener"
+              >Lua proxy addon</a
+            >
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-primary btn-sm flex-fill" id="dlAnimPack" disabled>
+              Download pack (.zip)
+            </button>
+            <button type="button" class="btn btn-outline-warning btn-sm flex-fill" id="dlAnimHdr" disabled>
+              Download .hdr.vtf
+            </button>
+          </div>
+          <div class="small text-muted mt-1" id="animStatus"></div>
+        </div>
+
+        <div class="sidebar-actions">
+          <button class="btn btn-primary btn-lg w-100" id="generateBtn" disabled>Generate</button>
+        </div>
+      </aside>
+
+      <main class="app-main" id="appMain">
+        <div class="main-placeholder" id="mainPlaceholder" role="button" tabindex="0">
+          Drop or click to load a base matcap or a .vtf cubemap
+        </div>
+
+        <div id="resultArea" style="display: none">
+          <output id="facesOutput">
+            <div class="env-cell" id="envSphereWrap">
+              <canvas id="envSphereCanvas" width="300" height="300"></canvas>
+              <span class="env-bar"
+                ><button type="button" class="env-link" id="envSphereFs" title="Open full screen">
+                  env sphere
+                </button></span
+              >
+            </div>
+          </output>
+
+          <div class="d-flex gap-2 justify-content-center flex-wrap mt-3 mb-3">
+            <button class="btn btn-success" id="dlVtf">Download .vtf</button>
+            <button class="btn btn-outline-warning" id="dlVtfHdr">Download .hdr.vtf</button>
+            <button class="btn btn-outline-secondary" id="dlPngZip">Download 6 faces (.zip)</button>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script
+      crossorigin="anonymous"
+      integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+    ></script>
+    <script src="../styles/script.js"></script>
+    <script src="script.js"></script>
+  </body>
 </html>

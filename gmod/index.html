@@ -1,89 +1,69 @@
-<!DOCTYPE HTML>
-<html>
-
-<head>
-    <meta charset="utf-8">
-    <title>Поднебесный сандбокс</title>
-    <link rel="stylesheet" type="text/css" href="style.css">
-</head>
-
-<body>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Celestial Sandbox</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
     <script>
+      const ALBUM_ID = "AhiiHfd";
+      const CLIENT_ID = "c66c8c9fe60d2e1";
+      const ALBUM_API = `https://api.imgur.com/3/album/${ALBUM_ID}/images`;
+      const BLUR_URL = "https://i.imgur.com/fWIyegc.png";
+      const LOGO_URL = "https://i.imgur.com/BAcwcXA.png";
+      const SLIDE_INTERVAL_MS = 8000;
 
-var albumID = 'AhiiHfd';
-var albumAPI = "https://api.imgur.com/3/album/" + albumID + "/images";
-var imageUrls = [];
-
-var xhr = new XMLHttpRequest();
-xhr.open('GET', albumAPI, true);
-xhr.setRequestHeader('Authorization', 'Client-ID c66c8c9fe60d2e1');
-xhr.responseType = 'json';
-
-xhr.onload = function() {
-    var status = xhr.status;
-    if (status === 200) {
-        var data = xhr.response;
-        // Добавляем ссылки в массив imageUrls
-        for (var i = 0; i < data.data.length; i++) {
-            imageUrls.push(data.data[i].link);
+      function shuffle(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [array[i], array[j]] = [array[j], array[i]];
         }
+      }
 
-        shuffleArray(imageUrls);
+      function createImage(src, className) {
+        const img = document.createElement("img");
+        img.src = src;
+        img.classList.add(className);
+        return img;
+      }
 
-        console.log(imageUrls);
+      function startSlideshow(urls) {
+        const container = document.createElement("div");
+        container.classList.add("background-container");
+        document.body.appendChild(container);
 
-        const div = document.createElement('div');
-        div.classList.add('background-container');
+        container.appendChild(createImage(BLUR_URL, "background_blur"));
 
-
-        document.body.appendChild(div);
-
-        const background_blur = document.createElement('img');
-        background_blur.src = "https://i.imgur.com/fWIyegc.png"; // Set the logo image source
-        background_blur.classList.add("background_blur");
-        div.appendChild(background_blur);
-
-        imageUrls.forEach((url, index) => {
-            const img = document.createElement('img');
-            img.src = url;
-            if (index === 0) {
-                img.classList.add('showing');
-            }
-            img.classList.add('background');
-            div.appendChild(img); 
+        urls.forEach((url, index) => {
+          const img = createImage(url, "background");
+          if (index === 0) img.classList.add("showing");
+          container.appendChild(img);
         });
 
-        const logo = document.createElement('img');
-        logo.src = "https://i.imgur.com/BAcwcXA.png"; 
-        logo.classList.add("logo");
-        div.appendChild(logo);
-        var currentImageIndex = 0; 
+        container.appendChild(createImage(LOGO_URL, "logo"));
 
-        function showNextImage() {
-            const images = div.querySelectorAll('img:is(.background)');
-            images[currentImageIndex].classList.remove('showing');
-            currentImageIndex = (currentImageIndex + 1) % images.length;
-            images[currentImageIndex].classList.add('showing');
-        }
+        const slides = container.querySelectorAll("img.background");
+        let current = 0;
+        setInterval(() => {
+          slides[current].classList.remove("showing");
+          current = (current + 1) % slides.length;
+          slides[current].classList.add("showing");
+        }, SLIDE_INTERVAL_MS);
+      }
 
-        setInterval(showNextImage, 8000);
-    } else {
-        console.log("ERRORZ");
-    }
-};
-
-xhr.send();
-
-function shuffleArray(array) {
-    for (var i = array.length - 1; i > 0; i--) {
-        var j = Math.floor(Math.random() * (i + 1));
-        var temp = array[i];
-        array[i] = array[j];
-        array[j] = temp;
-    }
-}
-
+      fetch(ALBUM_API, { headers: { Authorization: `Client-ID ${CLIENT_ID}` } })
+        .then((response) => {
+          if (!response.ok) throw new Error(`Imgur API returned ${response.status}`);
+          return response.json();
+        })
+        .then(({ data }) => {
+          const urls = data.map((image) => image.link);
+          shuffle(urls);
+          startSlideshow(urls);
+        })
+        .catch((error) => console.error("Failed to load album:", error));
     </script>
-</body>
-
+  </body>
 </html>

@@ -1,741 +1,821 @@
 function createEngineCore(post) {
-    'use strict';
-
-    const FACES = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
-
-    const BASIS = {
-        px: [0, 0, -1, 0, 1, 0, 1, 0, 0],
-        nx: [0, 0, 1, 0, 1, 0, -1, 0, 0],
-        py: [1, 0, 0, 0, 0, -1, 0, 1, 0],
-        ny: [1, 0, 0, 0, 0, 1, 0, -1, 0],
-        pz: [1, 0, 0, 0, 1, 0, 0, 0, 1],
-        nz: [-1, 0, 0, 0, 1, 0, 0, 0, -1]
-    };
-
-    const BLEND = {
-        normal: (b, l) => l,
-        multiply: (b, l) => b * l,
-        screen: (b, l) => 1 - (1 - b) * (1 - l),
-        overlay: (b, l) => (b < 0.5 ? 2 * b * l : 1 - 2 * (1 - b) * (1 - l)),
-        'hard-light': (b, l) => (l < 0.5 ? 2 * b * l : 1 - 2 * (1 - b) * (1 - l)),
-        add: (b, l) => Math.min(1, b + l),
-        'soft-light': (b, l) => (l <= 0.5
-            ? b - (1 - 2 * l) * b * (1 - b)
-            : b + (2 * l - 1) * ((b <= 0.25 ? ((16 * b - 12) * b + 4) * b : Math.sqrt(b)) - b)),
-        darken: (b, l) => Math.min(b, l),
-        lighten: (b, l) => Math.max(b, l),
-        difference: (b, l) => Math.abs(b - l)
-    };
-
-    let base = null;
-    let back = null;
-    const layerPx = new Map();
-    let baseVer = 0, layerVer = 0;
-    let composite = null, compKey = '';
-    let pyramid = null;
-    let env = null;
-    let backPyr = null;
-
-    let running = null, queued = null;
-
-    const chan = new MessageChannel();
-    const yieldNow = () => new Promise(res => {
-        chan.port1.onmessage = () => res();
-        chan.port2.postMessage(0);
+  "use strict";
+  const FACES2 = ["px", "nx", "py", "ny", "pz", "nz"];
+  const BASIS = {
+    px: [0, 0, -1, 0, 1, 0, 1, 0, 0],
+    nx: [0, 0, 1, 0, 1, 0, -1, 0, 0],
+    py: [1, 0, 0, 0, 0, -1, 0, 1, 0],
+    ny: [1, 0, 0, 0, 0, 1, 0, -1, 0],
+    pz: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    nz: [-1, 0, 0, 0, 1, 0, 0, 0, -1],
+  };
+  const BLEND = {
+    normal: (b, l) => l,
+    multiply: (b, l) => b * l,
+    screen: (b, l) => 1 - (1 - b) * (1 - l),
+    overlay: (b, l) => (b < 0.5 ? 2 * b * l : 1 - 2 * (1 - b) * (1 - l)),
+    "hard-light": (b, l) => (l < 0.5 ? 2 * b * l : 1 - 2 * (1 - b) * (1 - l)),
+    add: (b, l) => Math.min(1, b + l),
+    "soft-light": (b, l) =>
+      l <= 0.5
+        ? b - (1 - 2 * l) * b * (1 - b)
+        : b + (2 * l - 1) * ((b <= 0.25 ? ((16 * b - 12) * b + 4) * b : Math.sqrt(b)) - b),
+    darken: (b, l) => Math.min(b, l),
+    lighten: (b, l) => Math.max(b, l),
+    difference: (b, l) => Math.abs(b - l),
+  };
+  let base = null;
+  let back = null;
+  const layerPx = new Map();
+  let baseVer = 0,
+    layerVer = 0;
+  let composite = null,
+    compKey = "";
+  let pyramid = null;
+  let env = null;
+  let backPyr = null;
+  let running = null,
+    queued = null;
+  const chan = new MessageChannel();
+  const yieldNow = () =>
+    new Promise((res) => {
+      chan.port1.onmessage = () => res();
+      chan.port2.postMessage(0);
     });
-
-    function sample(data, w, h, u, v, out) {
-        u = u < 0 ? 0 : (u > 1 ? 1 : u);
-        v = v < 0 ? 0 : (v > 1 ? 1 : v);
-        const x = u * (w - 1), y = v * (h - 1);
-        const x0 = x | 0, y0 = y | 0;
-        const x1 = x0 + 1 < w ? x0 + 1 : w - 1;
-        const y1 = y0 + 1 < h ? y0 + 1 : h - 1;
-        const fx = x - x0, fy = y - y0;
-        const i00 = (y0 * w + x0) * 4, i10 = (y0 * w + x1) * 4;
-        const i01 = (y1 * w + x0) * 4, i11 = (y1 * w + x1) * 4;
-        const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy);
-        const w01 = (1 - fx) * fy, w11 = fx * fy;
-        out[0] = data[i00] * w00 + data[i10] * w10 + data[i01] * w01 + data[i11] * w11;
-        out[1] = data[i00 + 1] * w00 + data[i10 + 1] * w10 + data[i01 + 1] * w01 + data[i11 + 1] * w11;
-        out[2] = data[i00 + 2] * w00 + data[i10 + 2] * w10 + data[i01 + 2] * w01 + data[i11 + 2] * w11;
+  function sample(data, w, h, u, v, out) {
+    u = u < 0 ? 0 : u > 1 ? 1 : u;
+    v = v < 0 ? 0 : v > 1 ? 1 : v;
+    const x2 = u * (w - 1),
+      y = v * (h - 1);
+    const x0 = x2 | 0,
+      y0 = y | 0;
+    const x1 = x0 + 1 < w ? x0 + 1 : w - 1;
+    const y1 = y0 + 1 < h ? y0 + 1 : h - 1;
+    const fx = x2 - x0,
+      fy = y - y0;
+    const i00 = (y0 * w + x0) * 4,
+      i10 = (y0 * w + x1) * 4;
+    const i01 = (y1 * w + x0) * 4,
+      i11 = (y1 * w + x1) * 4;
+    const w00 = (1 - fx) * (1 - fy),
+      w10 = fx * (1 - fy);
+    const w01 = (1 - fx) * fy,
+      w11 = fx * fy;
+    out[0] = data[i00] * w00 + data[i10] * w10 + data[i01] * w01 + data[i11] * w11;
+    out[1] = data[i00 + 1] * w00 + data[i10 + 1] * w10 + data[i01 + 1] * w01 + data[i11 + 1] * w11;
+    out[2] = data[i00 + 2] * w00 + data[i10 + 2] * w10 + data[i01 + 2] * w01 + data[i11 + 2] * w11;
+  }
+  function sampleDisc(data, w, h, u, v, out) {
+    const nu = (u - 0.5) * 2,
+      nv = (v - 0.5) * 2;
+    const r2 = nu * nu + nv * nv;
+    if (r2 > 0.990025) {
+      const k = 0.995 / Math.sqrt(r2);
+      u = 0.5 + nu * k * 0.5;
+      v = 0.5 + nv * k * 0.5;
     }
-
-    function sampleDisc(data, w, h, u, v, out) {
-        const nu = (u - 0.5) * 2, nv = (v - 0.5) * 2;
-        const r2 = nu * nu + nv * nv;
-        if (r2 > 0.990025) {
-            const k = 0.995 / Math.sqrt(r2);
-            u = 0.5 + nu * k * 0.5;
-            v = 0.5 + nv * k * 0.5;
-        }
-        sample(data, w, h, u, v, out);
+    sample(data, w, h, u, v, out);
+  }
+  const smooth = (t) => {
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return t * t * (3 - 2 * t);
+  };
+  function ensureComposite(layerDefs) {
+    const active = layerDefs.filter((l) => layerPx.has(l.id));
+    const key =
+      baseVer + "|" + layerVer + "|" + active.map((l) => l.id + ":" + l.opacity + ":" + l.blend).join(",");
+    if (composite && key === compKey) return;
+    compKey = key;
+    pyramid = null;
+    if (!active.length) {
+      composite = base.data;
+      return;
     }
-
-    const smooth = t => { t = t < 0 ? 0 : (t > 1 ? 1 : t); return t * t * (3 - 2 * t); };
-
-    function ensureComposite(layerDefs) {
-        const active = layerDefs.filter(l => layerPx.has(l.id));
-        const key = baseVer + '|' + layerVer + '|' +
-            active.map(l => l.id + ':' + l.opacity + ':' + l.blend).join(',');
-        if (composite && key === compKey) return;
-        compKey = key;
-        pyramid = null;
-
-        if (!active.length) { composite = base.data; return; }
-
-        const out = new Uint8ClampedArray(base.data);
-        const n = base.w * base.h;
-        for (const l of active) {
-            const px = layerPx.get(l.id);
-            if (!px || px.length < n * 4) continue;
-            const op = l.opacity;
-            const fn = BLEND[l.blend] || BLEND.normal;
-            for (let i = 0, j = 0; i < n; i++, j += 4) {
-                const a = (px[j + 3] / 255) * op;
-                if (a <= 0) continue;
-                const bR = out[j] / 255, bG = out[j + 1] / 255, bB = out[j + 2] / 255;
-                out[j]     += (fn(bR, px[j] / 255) * 255 - out[j]) * a;
-                out[j + 1] += (fn(bG, px[j + 1] / 255) * 255 - out[j + 1]) * a;
-                out[j + 2] += (fn(bB, px[j + 2] / 255) * 255 - out[j + 2]) * a;
-            }
-        }
-        composite = out;
+    const out = new Uint8ClampedArray(base.data);
+    const n = base.w * base.h;
+    for (const l of active) {
+      const px = layerPx.get(l.id);
+      if (!px || px.length < n * 4) continue;
+      const op = l.opacity;
+      const fn = BLEND[l.blend] || BLEND.normal;
+      for (let i = 0, j = 0; i < n; i++, j += 4) {
+        const a = (px[j + 3] / 255) * op;
+        if (a <= 0) continue;
+        const bR = out[j] / 255,
+          bG = out[j + 1] / 255,
+          bB = out[j + 2] / 255;
+        out[j] += (fn(bR, px[j] / 255) * 255 - out[j]) * a;
+        out[j + 1] += (fn(bG, px[j + 1] / 255) * 255 - out[j + 1]) * a;
+        out[j + 2] += (fn(bB, px[j + 2] / 255) * 255 - out[j + 2]) * a;
+      }
     }
-
-    function buildDiscClamped(src, w, h) {
-        const out = new Uint8ClampedArray(w * h * 4);
-        const cx = (w - 1) / 2, cy = (h - 1) / 2;
-        const R = Math.min(cx, cy);
-        const tmp = new Float64Array(3);
-        for (let y = 0; y < h; y++) {
-            const ny = (y - cy) / R;
-            for (let x = 0; x < w; x++) {
-                const nx = (x - cx) / R;
-                const r = Math.sqrt(nx * nx + ny * ny);
-                let sx = x, sy = y;
-                if (r > 0.995) {
-                    const k = 0.995 / r;
-                    sx = cx + nx * k * R;
-                    sy = cy + ny * k * R;
-                }
-                sample(src, w, h, sx / (w - 1), sy / (h - 1), tmp);
-                const off = (y * w + x) * 4;
-                out[off] = tmp[0]; out[off + 1] = tmp[1]; out[off + 2] = tmp[2]; out[off + 3] = 255;
-            }
+    composite = out;
+  }
+  function buildDiscClamped(src, w, h) {
+    const out = new Uint8ClampedArray(w * h * 4);
+    const cx = (w - 1) / 2,
+      cy = (h - 1) / 2;
+    const R = Math.min(cx, cy);
+    const tmp = new Float64Array(3);
+    for (let y = 0; y < h; y++) {
+      const ny = (y - cy) / R;
+      for (let x2 = 0; x2 < w; x2++) {
+        const nx = (x2 - cx) / R;
+        const r = Math.sqrt(nx * nx + ny * ny);
+        let sx = x2,
+          sy = y;
+        if (r > 0.995) {
+          const k = 0.995 / r;
+          sx = cx + nx * k * R;
+          sy = cy + ny * k * R;
         }
-        return out;
+        sample(src, w, h, sx / (w - 1), sy / (h - 1), tmp);
+        const off = (y * w + x2) * 4;
+        out[off] = tmp[0];
+        out[off + 1] = tmp[1];
+        out[off + 2] = tmp[2];
+        out[off + 3] = 255;
+      }
     }
-
-    function buildPyramid(data0, w0, h0) {
-        const levels = [{ data: data0, w: w0, h: h0 }];
-        let w = w0, h = h0, data = data0;
-        while (w > 4 && h > 4 && levels.length < 8) {
-            const nw = Math.max(1, w >> 1), nh = Math.max(1, h >> 1);
-            const nd = new Uint8ClampedArray(nw * nh * 4);
-            for (let y = 0; y < nh; y++) {
-                const y0 = Math.min(y * 2, h - 1), y1 = Math.min(y * 2 + 1, h - 1);
-                for (let x = 0; x < nw; x++) {
-                    const x0 = Math.min(x * 2, w - 1), x1 = Math.min(x * 2 + 1, w - 1);
-                    for (let ch = 0; ch < 3; ch++) {
-                        const s = data[(y0 * w + x0) * 4 + ch] + data[(y0 * w + x1) * 4 + ch] +
-                                  data[(y1 * w + x0) * 4 + ch] + data[(y1 * w + x1) * 4 + ch];
-                        nd[(y * nw + x) * 4 + ch] = s / 4;
-                    }
-                    nd[(y * nw + x) * 4 + 3] = 255;
-                }
-            }
-            levels.push({ data: nd, w: nw, h: nh });
-            w = nw; h = nh; data = nd;
+    return out;
+  }
+  function buildPyramid(data0, w0, h0) {
+    const levels = [{ data: data0, w: w0, h: h0 }];
+    let w = w0,
+      h = h0,
+      data = data0;
+    while (w > 4 && h > 4 && levels.length < 8) {
+      const nw = Math.max(1, w >> 1),
+        nh = Math.max(1, h >> 1);
+      const nd = new Uint8ClampedArray(nw * nh * 4);
+      for (let y = 0; y < nh; y++) {
+        const y0 = Math.min(y * 2, h - 1),
+          y1 = Math.min(y * 2 + 1, h - 1);
+        for (let x2 = 0; x2 < nw; x2++) {
+          const x0 = Math.min(x2 * 2, w - 1),
+            x1 = Math.min(x2 * 2 + 1, w - 1);
+          for (let ch = 0; ch < 3; ch++) {
+            const s =
+              data[(y0 * w + x0) * 4 + ch] +
+              data[(y0 * w + x1) * 4 + ch] +
+              data[(y1 * w + x0) * 4 + ch] +
+              data[(y1 * w + x1) * 4 + ch];
+            nd[(y * nw + x2) * 4 + ch] = s / 4;
+          }
+          nd[(y * nw + x2) * 4 + 3] = 255;
         }
-        return levels;
+      }
+      levels.push({ data: nd, w: nw, h: nh });
+      w = nw;
+      h = nh;
+      data = nd;
     }
-
-    function getBackPyramid() {
-        if (!backPyr) {
-            const clamped = buildDiscClamped(back.data, back.w, back.h);
-            backPyr = buildPyramid(clamped, back.w, back.h);
-            backPyr[0] = { data: back.data, w: back.w, h: back.h };
-        }
-        return backPyr;
+    return levels;
+  }
+  function getBackPyramid() {
+    if (!backPyr) {
+      const clamped = buildDiscClamped(back.data, back.w, back.h);
+      backPyr = buildPyramid(clamped, back.w, back.h);
+      backPyr[0] = { data: back.data, w: back.w, h: back.h };
     }
-
-    function getPyramid() {
-        if (!pyramid) {
-            const clamped = buildDiscClamped(composite, base.w, base.h);
-            pyramid = buildPyramid(clamped, base.w, base.h);
-            pyramid[0] = { data: composite, w: base.w, h: base.h };
-        }
-        return pyramid;
+    return backPyr;
+  }
+  function getPyramid() {
+    if (!pyramid) {
+      const clamped = buildDiscClamped(composite, base.w, base.h);
+      pyramid = buildPyramid(clamped, base.w, base.h);
+      pyramid[0] = { data: composite, w: base.w, h: base.h };
     }
-
-    const mipA = new Float64Array(3), mipB = new Float64Array(3);
-    function sampleMip(pyr, u, v, level, out) {
-        const maxLevel = pyr.length - 1;
-        level = level < 0 ? 0 : (level > maxLevel ? maxLevel : level);
-        const l0 = level | 0, l1 = l0 + 1 < maxLevel ? l0 + 1 : maxLevel;
-        const t = level - l0;
-        const p0 = pyr[l0], p1 = pyr[l1];
-        sample(p0.data, p0.w, p0.h, u, v, mipA);
-        sample(p1.data, p1.w, p1.h, u, v, mipB);
-        out[0] = mipA[0] * (1 - t) + mipB[0] * t;
-        out[1] = mipA[1] * (1 - t) + mipB[1] * t;
-        out[2] = mipA[2] * (1 - t) + mipB[2] * t;
+    return pyramid;
+  }
+  const mipA = new Float64Array(3),
+    mipB = new Float64Array(3);
+  function sampleMip(pyr, u, v, level, out) {
+    const maxLevel = pyr.length - 1;
+    level = level < 0 ? 0 : level > maxLevel ? maxLevel : level;
+    const l0 = level | 0,
+      l1 = l0 + 1 < maxLevel ? l0 + 1 : maxLevel;
+    const t = level - l0;
+    const p0 = pyr[l0],
+      p1 = pyr[l1];
+    sample(p0.data, p0.w, p0.h, u, v, mipA);
+    sample(p1.data, p1.w, p1.h, u, v, mipB);
+    out[0] = mipA[0] * (1 - t) + mipB[0] * t;
+    out[1] = mipA[1] * (1 - t) + mipB[1] * t;
+    out[2] = mipA[2] * (1 - t) + mipB[2] * t;
+  }
+  function makeRotator(pOrRx, ry, rz, gyaw, gpitch) {
+    const p =
+      typeof pOrRx === "object" && pOrRx !== null
+        ? pOrRx
+        : {
+            rx: pOrRx,
+            ry,
+            rz,
+            gridYaw: gyaw,
+            gridPitch: gpitch,
+          };
+    const rx = p.rx || 0,
+      ry_val = p.ry || 0,
+      rz_val = p.rz || 0;
+    const cx = Math.cos(rx),
+      sx = Math.sin(rx);
+    const cy = Math.cos(ry_val),
+      sy = Math.sin(ry_val);
+    const cz = Math.cos(rz_val),
+      sz = Math.sin(rz_val);
+    function applyTexture(x2, y, z, out) {
+      const y1 = y * cx - z * sx,
+        z1 = y * sx + z * cx;
+      const x22 = x2 * cy + z1 * sy,
+        z2 = -x2 * sy + z1 * cy;
+      out[0] = x22 * cz - y1 * sz;
+      out[1] = x22 * sz + y1 * cz;
+      out[2] = z2;
     }
-
-    function makeRotator(pOrRx, ry, rz, gyaw, gpitch) {
-        const p = (typeof pOrRx === 'object' && pOrRx !== null) ? pOrRx : {
-            rx: pOrRx, ry: ry, rz: rz, gridYaw: gyaw, gridPitch: gpitch
-        };
-        const rx = p.rx || 0, ry_val = p.ry || 0, rz_val = p.rz || 0;
-        const cx = Math.cos(rx), sx = Math.sin(rx);
-        const cy = Math.cos(ry_val), sy = Math.sin(ry_val);
-        const cz = Math.cos(rz_val), sz = Math.sin(rz_val);
-
-        function applyTexture(x, y, z, out) {
-            const y1 = y * cx - z * sx, z1 = y * sx + z * cx;
-            const x2 = x * cy + z1 * sy, z2 = -x * sy + z1 * cy;
-            out[0] = x2 * cz - y1 * sz;
-            out[1] = x2 * sz + y1 * cz;
-            out[2] = z2;
-        }
-
-        if (p.gridYaw !== undefined || p.gridPitch !== undefined) {
-            const gcz = Math.cos(p.gridYaw || 0), gsz = Math.sin(p.gridYaw || 0);
-            const gcy = Math.cos(p.gridPitch || 0), gsy = Math.sin(p.gridPitch || 0);
-            return (x, y, z, out) => {
-                const ax = x * gcz - y * gsz, ay = x * gsz + y * gcz, az = z;
-                const bx = ax * gcy + az * gsy;
-                const bz = -ax * gsy + az * gcy;
-                const by = ay;
-                applyTexture(bx, bz, -by, out);
-            };
-        }
-
-        if (p.animAxis) {
-            const ang = p.animAngle || 0;
-            const ca = Math.cos(ang), sa = Math.sin(ang);
-            return (x, y, z, out) => {
-                let wx = x, wy = y, wz = z;
-                if (p.animAxis === 'y') {
-                    wx = x * ca - y * sa;
-                    wy = x * sa + y * ca;
-                } else if (p.animAxis === 'x') {
-                    wx = x * ca + z * sa;
-                    wz = -x * sa + z * ca;
-                } else if (p.animAxis === 'z') {
-                    wy = y * ca - z * sa;
-                    wz = y * sa + z * ca;
-                }
-                applyTexture(wx, wz, -wy, out);
-            };
-        }
-
-        if (p.forExport) {
-            return (x, y, z, out) => {
-                applyTexture(x, z, -y, out);
-            };
-        }
-
-        return (x, y, z, out) => {
-            applyTexture(x, y, z, out);
-        };
+    if (p.gridYaw !== void 0 || p.gridPitch !== void 0) {
+      const gcz = Math.cos(p.gridYaw || 0),
+        gsz = Math.sin(p.gridYaw || 0);
+      const gcy = Math.cos(p.gridPitch || 0),
+        gsy = Math.sin(p.gridPitch || 0);
+      return (x2, y, z, out) => {
+        const ax = x2 * gcz - y * gsz,
+          ay = x2 * gsz + y * gcz,
+          az = z;
+        const bx = ax * gcy + az * gsy;
+        const bz = -ax * gsy + az * gcy;
+        const by = ay;
+        applyTexture(bx, bz, -by, out);
+      };
     }
-
-    function setEnv(m) {
-        if (!m.faces) { env = null; return; }
-        const levels = {};
-        for (const f of FACES) levels[f] = [{ data: m.faces[f], w: m.size, h: m.size }];
-        env = { size: m.size, levels, built: false };
-    }
-
-    function ensureEnvPyramid() {
-        if (env.built) return;
-        for (const f of FACES) {
-            const l0 = env.levels[f][0];
-            env.levels[f] = buildPyramid(l0.data, l0.w, l0.h);
+    if (p.animAxis) {
+      const ang = p.animAngle || 0;
+      const ca = Math.cos(ang),
+        sa = Math.sin(ang);
+      return (x2, y, z, out) => {
+        let wx = x2,
+          wy = y,
+          wz = z;
+        if (p.animAxis === "y") {
+          wx = x2 * ca - y * sa;
+          wy = x2 * sa + y * ca;
+        } else if (p.animAxis === "x") {
+          wx = x2 * ca + z * sa;
+          wz = -x2 * sa + z * ca;
+        } else if (p.animAxis === "z") {
+          wy = y * ca - z * sa;
+          wz = y * sa + z * ca;
         }
-        env.built = true;
+        applyTexture(wx, wz, -wy, out);
+      };
     }
-
-    function sampleEnv(dx, dy, dz, level, out) {
-        const ax = Math.abs(dx), ay = Math.abs(dy), az = Math.abs(dz);
-        let fi;
-        if (ax >= ay && ax >= az) fi = dx > 0 ? 0 : 1;
-        else if (ay >= az) fi = dy > 0 ? 2 : 3;
-        else fi = dz > 0 ? 4 : 5;
-        const bs = BASIS[FACES[fi]];
-        const dc = dx * bs[6] + dy * bs[7] + dz * bs[8];
-        const u = ((dx * bs[0] + dy * bs[1] + dz * bs[2]) / dc + 1) * 0.5;
-        const v = (1 - (dx * bs[3] + dy * bs[4] + dz * bs[5]) / dc) * 0.5;
-        const pyr = env.levels[FACES[fi]];
-        if (level <= 0) sample(pyr[0].data, pyr[0].w, pyr[0].h, u, v, out);
-        else sampleMip(pyr, u, v, level, out);
+    if (p.forExport) {
+      return (x2, y, z, out) => {
+        applyTexture(x2, z, -y, out);
+      };
     }
-
-    async function generateEnv(size, p, job) {
-        const soft = p.softness;
-        const lod0 = size < env.size ? Math.log2(env.size / size) : 0;
-        if (lod0 > 0 || soft > 0) ensureEnvPyramid();
-        const maxLevel = env.levels.px.length - 1;
-        const rot = makeRotator(p);
-
-        const cF = new Float64Array(3), cS = new Float64Array(3);
-        const rv = new Float64Array(3);
-        const denom = size - 1;
-        const rowsPerChunk = Math.max(4, (32768 / size) | 0);
-        const faces = {};
-
-        for (const face of FACES) {
-            const bs = BASIS[face];
-            rot(bs[0], bs[1], bs[2], rv); const Ax = rv[0], Ay = rv[1], Az = rv[2];
-            rot(bs[3], bs[4], bs[5], rv); const Bx = rv[0], By = rv[1], Bz = rv[2];
-            rot(bs[6], bs[7], bs[8], rv); const Cx = rv[0], Cy = rv[1], Cz = rv[2];
-
-            const buf = new Uint8ClampedArray(size * size * 4);
-            let off = 0;
-
-            for (let row = 0; row < size; row++) {
-                if (job.final && row > 0 && row % rowsPerChunk === 0) {
-                    await yieldNow();
-                    if (job.aborted) return null;
-                }
-                const b = 1 - 2 * row / denom;
-                const rowX = Bx * b + Cx, rowY = By * b + Cy, rowZ = Bz * b + Cz;
-
-                for (let col = 0; col < size; col++, off += 4) {
-                    const a = -1 + 2 * col / denom;
-                    const il = 1 / Math.sqrt(a * a + b * b + 1);
-                    const dx = (Ax * a + rowX) * il;
-                    const dy = (Ay * a + rowY) * il;
-                    const dz = (Az * a + rowZ) * il;
-
-                    sampleEnv(dx, dy, dz, lod0, cF);
-                    let r = cF[0], g = cF[1], bl = cF[2];
-
-                    if (soft > 0) {
-                        sampleEnv(dx, dy, dz, Math.min(maxLevel, lod0 + soft * maxLevel), cS);
-                        r = r * (1 - soft) + cS[0] * soft;
-                        g = g * (1 - soft) + cS[1] * soft;
-                        bl = bl * (1 - soft) + cS[2] * soft;
-                    }
-
-                    buf[off] = r;
-                    buf[off + 1] = g;
-                    buf[off + 2] = bl;
-                    buf[off + 3] = 255;
-                }
-            }
-            faces[face] = buf;
-        }
-        return faces;
-    }
-
-    async function generate(size, p, job) {
-        if (env) return generateEnv(size, p, job);
-        ensureComposite(p.layers);
-        const src = composite, sw = base.w, sh = base.h;
-        const rot = makeRotator(p);
-
-        const mode = (p.backMode === 'matcap' && !back) ? 'blur' : p.backMode;
-        const soft = p.softness;
-        const rimAng = p.rimAngle || Math.PI / 2;
-        const rimOn = rimAng > Math.PI / 2 + 1e-4;
-        const rimK = (Math.PI / 2) / rimAng;
-        const rimCos = rimOn ? Math.cos(rimAng) : 0;
-        const rimDen = 1 + rimCos;
-        const rimBlur = p.rimBlur === undefined ? 0 : p.rimBlur;
-        const dAng = (Math.PI / 2) / size;
-        const bRimAng = p.backRimAngle || Math.PI / 2;
-        const bRimOn = mode === 'matcap' && bRimAng > Math.PI / 2 + 1e-4;
-        const bRimK = (Math.PI / 2) / bRimAng;
-        const bpyr = bRimOn ? getBackPyramid() : null;
-        const pyr = (mode === 'blur' || soft > 0 || rimOn) ? getPyramid() : null;
-        const maxLevel = pyr ? pyr.length - 1 : 0;
-
-        const hs = 0.5 / p.scale;
-        const bhs = 0.5 / p.backScale;
-        const threshold = -(1 - p.backRadius) + rimCos;
-        const halfWidth = 0.4 * Math.pow(1 - p.edgeSharp, 2.2) + 0.002;
-        const inv2hw = 1 / (2 * halfWidth);
-
-        const sA = p.solid[3];
-        const sR = p.solid[0] * sA, sG = p.solid[1] * sA, sB = p.solid[2] * sA;
-
-        const a1 = p.grad1[3], a2 = p.grad2[3];
-        const g1R = p.grad1[0] * a1, g1G = p.grad1[1] * a1, g1B = p.grad1[2] * a1;
-        const g2R = p.grad2[0] * a2, g2G = p.grad2[1] * a2, g2B = p.grad2[2] * a2;
-        const gRange = Math.max(0.001, 1 + threshold);
-        const gInv = 1 / (2 * (0.5 * Math.pow(1 - p.gradSharp, 2.2) + 0.0015));
-        const gInner = p.gradInner;
-
-        const cF = new Float64Array(3), cB = new Float64Array(3), cS = new Float64Array(3);
-        const rv = new Float64Array(3);
-        const denom = size - 1;
-        const rowsPerChunk = Math.max(4, (32768 / size) | 0);
-        const faces = {};
-
-        for (const face of FACES) {
-            const bs = BASIS[face];
-            rot(bs[0], bs[1], bs[2], rv); const Ax = rv[0], Ay = rv[1], Az = rv[2];
-            rot(bs[3], bs[4], bs[5], rv); const Bx = rv[0], By = rv[1], Bz = rv[2];
-            rot(bs[6], bs[7], bs[8], rv); const Cx = rv[0], Cy = rv[1], Cz = rv[2];
-
-            const buf = new Uint8ClampedArray(size * size * 4);
-            let off = 0;
-
-            for (let row = 0; row < size; row++) {
-                if (job.final && row > 0 && row % rowsPerChunk === 0) {
-                    await yieldNow();
-                    if (job.aborted) return null;
-                }
-                const b = 1 - 2 * row / denom;
-                const rowX = Bx * b + Cx, rowY = By * b + Cy, rowZ = Bz * b + Cz;
-
-                for (let col = 0; col < size; col++, off += 4) {
-                    const a = -1 + 2 * col / denom;
-                    const il = 1 / Math.sqrt(a * a + b * b + 1);
-                    const dx = (Ax * a + rowX) * il;
-                    const dy = (Ay * a + rowY) * il;
-                    const dz = (Az * a + rowZ) * il;
-
-                    let uF, vF;
-                    if (rimOn) {
-                        const rho = Math.sqrt(dy * dy + dz * dz);
-                        const alpha = Math.acos(dx < -1 ? -1 : (dx > 1 ? 1 : dx));
-                        const kA = rimK * alpha;
-                        const rr = Math.sin(kA);
-                        const ux = rho > 1e-6 ? dz / rho : 1, uy = rho > 1e-6 ? dy / rho : 0;
-                        const rs = Math.min(rr / p.scale, 0.995);
-                        uF = 0.5 - 0.5 * rs * ux;
-                        vF = 0.5 - 0.5 * rs * uy;
-                        const tang = 0.5 * (rr / p.scale) / (rho > 1e-6 ? rho : 1e-6) * dAng * sw;
-                        const rad = 0.5 / p.scale * Math.abs(rimK * Math.cos(kA)) * dAng * sw;
-                        const lvl = Math.log2(Math.max(1, tang, rad)) +
-                            2 * rimBlur * Math.log2(1 / Math.max(Math.abs(Math.cos(kA)), 0.03));
-                        if (lvl > 0.01) sampleMip(pyr, uF, vF, lvl, cF);
-                        else sample(src, sw, sh, uF, vF, cF);
-                    } else {
-                        uF = 0.5 - dz * hs; vF = 0.5 - dy * hs;
-                        sampleDisc(src, sw, sh, uF, vF, cF);
-                    }
-                    let r = cF[0], g = cF[1], bl = cF[2];
-
-                    const raw = (threshold - dx) * inv2hw + 0.5;
-                    if (raw > 0) {
-                        const tB = raw >= 1 ? 1 : raw * raw * (3 - 2 * raw);
-                        let br, bg, bb;
-
-                        if (mode === 'matcap') {
-                            if (bRimOn) {
-                                const rho = Math.sqrt(dy * dy + dz * dz);
-                                const beta = Math.acos(dx > 1 ? -1 : (dx < -1 ? 1 : -dx));
-                                const kB = bRimK * beta;
-                                const rr = Math.sin(kB);
-                                const ux = rho > 1e-6 ? dz / rho : 1, uy = rho > 1e-6 ? dy / rho : 0;
-                                const rs = Math.min(rr / p.backScale, 0.995);
-                                const bu = 0.5 + 0.5 * rs * ux, bv = 0.5 - 0.5 * rs * uy;
-                                const tang = 0.5 * (rr / p.backScale) / (rho > 1e-6 ? rho : 1e-6) * dAng * back.w;
-                                const rad = 0.5 / p.backScale * Math.abs(bRimK * Math.cos(kB)) * dAng * back.w;
-                                const lv = Math.log2(Math.max(1, tang, rad)) +
-                                    2 * rimBlur * Math.log2(1 / Math.max(Math.abs(Math.cos(kB)), 0.03));
-                                if (lv > 0.01) sampleMip(bpyr, bu, bv, lv, cB);
-                                else sample(back.data, back.w, back.h, bu, bv, cB);
-                            } else {
-                                sampleDisc(back.data, back.w, back.h, 0.5 + dz * bhs, 0.5 - dy * bhs, cB);
-                            }
-                            br = cB[0]; bg = cB[1]; bb = cB[2];
-                        } else if (mode === 'gradient') {
-                            let dn = (dx + 1) / gRange;
-                            dn = dn < 0 ? 0 : (dn > 1 ? 1 : dn);
-                            const t = smooth((dn - gInner) * gInv + 0.5);
-                            const aa = a1 * (1 - t) + a2 * t;
-
-                            br = r * (1 - aa) + g1R * (1 - t) + g2R * t;
-                            bg = g * (1 - aa) + g1G * (1 - t) + g2G * t;
-                            bb = bl * (1 - aa) + g1B * (1 - t) + g2B * t;
-                        } else if (mode === 'color') {
-                            br = r * (1 - sA) + sR;
-                            bg = g * (1 - sA) + sG;
-                            bb = bl * (1 - sA) + sB;
-                        } else {
-                            const bt = rimDen > 1e-3 ? smooth((rimCos - dx) / rimDen) : 0;
-                            sampleMip(pyr, uF, vF, Math.pow(bt, 1.3) * maxLevel, cB);
-                            br = cB[0]; bg = cB[1]; bb = cB[2];
-                        }
-
-                        r = r * (1 - tB) + br * tB;
-                        g = g * (1 - tB) + bg * tB;
-                        bl = bl * (1 - tB) + bb * tB;
-                    }
-
-                    if (soft > 0) {
-                        sampleMip(pyr, uF, vF, soft * maxLevel, cS);
-                        r = r * (1 - soft) + cS[0] * soft;
-                        g = g * (1 - soft) + cS[1] * soft;
-                        bl = bl * (1 - soft) + cS[2] * soft;
-                    }
-
-                    buf[off] = r;
-                    buf[off + 1] = g;
-                    buf[off + 2] = bl;
-                    buf[off + 3] = 255;
-                }
-            }
-            faces[face] = buf;
-        }
-        return faces;
-    }
-
-    async function startNext() {
-        if (running || !queued) return;
-        const m = queued;
-        queued = null;
-        const job = running = { final: m.final, aborted: false };
-        try {
-            const faces = await generate(m.size, m.p, job);
-            if (faces) {
-                post({ type: 'faces', seq: m.seq, size: m.size, final: m.final, faces },
-                     FACES.map(f => faces[f].buffer));
-            }
-        } catch (err) {
-            post({ type: 'error', message: String((err && err.stack) || err) });
-        }
-        running = null;
-        startNext();
-    }
-
-    return {
-        handle(m) {
-            switch (m.type) {
-                case 'setBase':
-                    if (running) running.aborted = true;
-                    base = { data: m.data, w: m.w, h: m.h };
-                    baseVer++;
-                    break;
-                case 'setLayer':
-                    if (running) running.aborted = true;
-                    if (m.data) layerPx.set(m.id, m.data); else layerPx.delete(m.id);
-                    layerVer++;
-                    break;
-                case 'setBack':
-                    if (running) running.aborted = true;
-                    back = m.data ? { data: m.data, w: m.w, h: m.h } : null;
-                    backPyr = null;
-                    break;
-                case 'setEnv':
-                    if (running) running.aborted = true;
-                    setEnv(m);
-                    break;
-                case 'render':
-                    if (!base && !env) return;
-                    queued = m;
-                    if (running && running.final) running.aborted = true;
-                    startNext();
-                    break;
-            }
-        }
+    return (x2, y, z, out) => {
+      applyTexture(x2, y, z, out);
     };
-}
-
-const engine = (() => {
-    try {
-        const code = `const core=(${createEngineCore.toString()})((m,t)=>self.postMessage(m,t));` +
-                     `self.onmessage=e=>core.handle(e.data);`;
-        const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
-        const worker = new Worker(url);
-        worker.onmessage = e => handleEngineMessage(e.data);
-        worker.onerror = e => console.error('Render worker error:', e.message);
-        return { send: (m, transfer) => worker.postMessage(m, transfer || []) };
-    } catch (err) {
-        console.warn('Web Worker unavailable, rendering on the main thread.', err);
-        const core = createEngineCore(m => setTimeout(() => handleEngineMessage(m), 0));
-        return { send: m => setTimeout(() => core.handle(m), 0) };
+  }
+  function setEnv(m) {
+    if (!m.faces) {
+      env = null;
+      return;
     }
+    const levels = {};
+    for (const f of FACES2) levels[f] = [{ data: m.faces[f], w: m.size, h: m.size }];
+    env = { size: m.size, levels, built: false };
+  }
+  function ensureEnvPyramid() {
+    if (env.built) return;
+    for (const f of FACES2) {
+      const l0 = env.levels[f][0];
+      env.levels[f] = buildPyramid(l0.data, l0.w, l0.h);
+    }
+    env.built = true;
+  }
+  function sampleEnv(dx, dy, dz, level, out) {
+    const ax = Math.abs(dx),
+      ay = Math.abs(dy),
+      az = Math.abs(dz);
+    let fi;
+    if (ax >= ay && ax >= az) fi = dx > 0 ? 0 : 1;
+    else if (ay >= az) fi = dy > 0 ? 2 : 3;
+    else fi = dz > 0 ? 4 : 5;
+    const bs = BASIS[FACES2[fi]];
+    const dc = dx * bs[6] + dy * bs[7] + dz * bs[8];
+    const u = ((dx * bs[0] + dy * bs[1] + dz * bs[2]) / dc + 1) * 0.5;
+    const v = (1 - (dx * bs[3] + dy * bs[4] + dz * bs[5]) / dc) * 0.5;
+    const pyr = env.levels[FACES2[fi]];
+    if (level <= 0) sample(pyr[0].data, pyr[0].w, pyr[0].h, u, v, out);
+    else sampleMip(pyr, u, v, level, out);
+  }
+  async function generateEnv(size, p, job) {
+    const soft = p.softness;
+    const lod0 = size < env.size ? Math.log2(env.size / size) : 0;
+    if (lod0 > 0 || soft > 0) ensureEnvPyramid();
+    const maxLevel = env.levels.px.length - 1;
+    const rot = makeRotator(p);
+    const cF = new Float64Array(3),
+      cS = new Float64Array(3);
+    const rv = new Float64Array(3);
+    const denom = size - 1;
+    const rowsPerChunk = Math.max(4, (32768 / size) | 0);
+    const faces = {};
+    for (const face of FACES2) {
+      const bs = BASIS[face];
+      rot(bs[0], bs[1], bs[2], rv);
+      const Ax = rv[0],
+        Ay = rv[1],
+        Az = rv[2];
+      rot(bs[3], bs[4], bs[5], rv);
+      const Bx = rv[0],
+        By = rv[1],
+        Bz = rv[2];
+      rot(bs[6], bs[7], bs[8], rv);
+      const Cx = rv[0],
+        Cy = rv[1],
+        Cz = rv[2];
+      const buf = new Uint8ClampedArray(size * size * 4);
+      let off = 0;
+      for (let row = 0; row < size; row++) {
+        if (job.final && row > 0 && row % rowsPerChunk === 0) {
+          await yieldNow();
+          if (job.aborted) return null;
+        }
+        const b = 1 - (2 * row) / denom;
+        const rowX = Bx * b + Cx,
+          rowY = By * b + Cy,
+          rowZ = Bz * b + Cz;
+        for (let col = 0; col < size; col++, off += 4) {
+          const a = -1 + (2 * col) / denom;
+          const il = 1 / Math.sqrt(a * a + b * b + 1);
+          const dx = (Ax * a + rowX) * il;
+          const dy = (Ay * a + rowY) * il;
+          const dz = (Az * a + rowZ) * il;
+          sampleEnv(dx, dy, dz, lod0, cF);
+          let r = cF[0],
+            g = cF[1],
+            bl = cF[2];
+          if (soft > 0) {
+            sampleEnv(dx, dy, dz, Math.min(maxLevel, lod0 + soft * maxLevel), cS);
+            r = r * (1 - soft) + cS[0] * soft;
+            g = g * (1 - soft) + cS[1] * soft;
+            bl = bl * (1 - soft) + cS[2] * soft;
+          }
+          buf[off] = r;
+          buf[off + 1] = g;
+          buf[off + 2] = bl;
+          buf[off + 3] = 255;
+        }
+      }
+      faces[face] = buf;
+    }
+    return faces;
+  }
+  async function generate(size, p, job) {
+    if (env) return generateEnv(size, p, job);
+    ensureComposite(p.layers);
+    const src = composite,
+      sw = base.w,
+      sh = base.h;
+    const rot = makeRotator(p);
+    const mode = p.backMode === "matcap" && !back ? "blur" : p.backMode;
+    const soft = p.softness;
+    const rimAng = p.rimAngle || Math.PI / 2;
+    const rimOn = rimAng > Math.PI / 2 + 1e-4;
+    const rimK = Math.PI / 2 / rimAng;
+    const rimCos = rimOn ? Math.cos(rimAng) : 0;
+    const rimDen = 1 + rimCos;
+    const rimBlur = p.rimBlur === void 0 ? 0 : p.rimBlur;
+    const dAng = Math.PI / 2 / size;
+    const bRimAng = p.backRimAngle || Math.PI / 2;
+    const bRimOn = mode === "matcap" && bRimAng > Math.PI / 2 + 1e-4;
+    const bRimK = Math.PI / 2 / bRimAng;
+    const bpyr = bRimOn ? getBackPyramid() : null;
+    const pyr = mode === "blur" || soft > 0 || rimOn ? getPyramid() : null;
+    const maxLevel = pyr ? pyr.length - 1 : 0;
+    const hs = 0.5 / p.scale;
+    const bhs = 0.5 / p.backScale;
+    const threshold = -(1 - p.backRadius) + rimCos;
+    const halfWidth = 0.4 * Math.pow(1 - p.edgeSharp, 2.2) + 2e-3;
+    const inv2hw = 1 / (2 * halfWidth);
+    const sA = p.solid[3];
+    const sR = p.solid[0] * sA,
+      sG = p.solid[1] * sA,
+      sB = p.solid[2] * sA;
+    const a1 = p.grad1[3],
+      a2 = p.grad2[3];
+    const g1R = p.grad1[0] * a1,
+      g1G = p.grad1[1] * a1,
+      g1B = p.grad1[2] * a1;
+    const g2R = p.grad2[0] * a2,
+      g2G = p.grad2[1] * a2,
+      g2B = p.grad2[2] * a2;
+    const gRange = Math.max(1e-3, 1 + threshold);
+    const gInv = 1 / (2 * (0.5 * Math.pow(1 - p.gradSharp, 2.2) + 15e-4));
+    const gInner = p.gradInner;
+    const cF = new Float64Array(3),
+      cB = new Float64Array(3),
+      cS = new Float64Array(3);
+    const rv = new Float64Array(3);
+    const denom = size - 1;
+    const rowsPerChunk = Math.max(4, (32768 / size) | 0);
+    const faces = {};
+    for (const face of FACES2) {
+      const bs = BASIS[face];
+      rot(bs[0], bs[1], bs[2], rv);
+      const Ax = rv[0],
+        Ay = rv[1],
+        Az = rv[2];
+      rot(bs[3], bs[4], bs[5], rv);
+      const Bx = rv[0],
+        By = rv[1],
+        Bz = rv[2];
+      rot(bs[6], bs[7], bs[8], rv);
+      const Cx = rv[0],
+        Cy = rv[1],
+        Cz = rv[2];
+      const buf = new Uint8ClampedArray(size * size * 4);
+      let off = 0;
+      for (let row = 0; row < size; row++) {
+        if (job.final && row > 0 && row % rowsPerChunk === 0) {
+          await yieldNow();
+          if (job.aborted) return null;
+        }
+        const b = 1 - (2 * row) / denom;
+        const rowX = Bx * b + Cx,
+          rowY = By * b + Cy,
+          rowZ = Bz * b + Cz;
+        for (let col = 0; col < size; col++, off += 4) {
+          const a = -1 + (2 * col) / denom;
+          const il = 1 / Math.sqrt(a * a + b * b + 1);
+          const dx = (Ax * a + rowX) * il;
+          const dy = (Ay * a + rowY) * il;
+          const dz = (Az * a + rowZ) * il;
+          let uF, vF;
+          if (rimOn) {
+            const rho = Math.sqrt(dy * dy + dz * dz);
+            const alpha = Math.acos(dx < -1 ? -1 : dx > 1 ? 1 : dx);
+            const kA = rimK * alpha;
+            const rr = Math.sin(kA);
+            const ux = rho > 1e-6 ? dz / rho : 1,
+              uy = rho > 1e-6 ? dy / rho : 0;
+            const rs = Math.min(rr / p.scale, 0.995);
+            uF = 0.5 - 0.5 * rs * ux;
+            vF = 0.5 - 0.5 * rs * uy;
+            const tang = ((0.5 * (rr / p.scale)) / (rho > 1e-6 ? rho : 1e-6)) * dAng * sw;
+            const rad = (0.5 / p.scale) * Math.abs(rimK * Math.cos(kA)) * dAng * sw;
+            const lvl =
+              Math.log2(Math.max(1, tang, rad)) +
+              2 * rimBlur * Math.log2(1 / Math.max(Math.abs(Math.cos(kA)), 0.03));
+            if (lvl > 0.01) sampleMip(pyr, uF, vF, lvl, cF);
+            else sample(src, sw, sh, uF, vF, cF);
+          } else {
+            uF = 0.5 - dz * hs;
+            vF = 0.5 - dy * hs;
+            sampleDisc(src, sw, sh, uF, vF, cF);
+          }
+          let r = cF[0],
+            g = cF[1],
+            bl = cF[2];
+          const raw = (threshold - dx) * inv2hw + 0.5;
+          if (raw > 0) {
+            const tB = raw >= 1 ? 1 : raw * raw * (3 - 2 * raw);
+            let br, bg, bb;
+            if (mode === "matcap") {
+              if (bRimOn) {
+                const rho = Math.sqrt(dy * dy + dz * dz);
+                const beta = Math.acos(dx > 1 ? -1 : dx < -1 ? 1 : -dx);
+                const kB = bRimK * beta;
+                const rr = Math.sin(kB);
+                const ux = rho > 1e-6 ? dz / rho : 1,
+                  uy = rho > 1e-6 ? dy / rho : 0;
+                const rs = Math.min(rr / p.backScale, 0.995);
+                const bu = 0.5 + 0.5 * rs * ux,
+                  bv = 0.5 - 0.5 * rs * uy;
+                const tang = ((0.5 * (rr / p.backScale)) / (rho > 1e-6 ? rho : 1e-6)) * dAng * back.w;
+                const rad = (0.5 / p.backScale) * Math.abs(bRimK * Math.cos(kB)) * dAng * back.w;
+                const lv =
+                  Math.log2(Math.max(1, tang, rad)) +
+                  2 * rimBlur * Math.log2(1 / Math.max(Math.abs(Math.cos(kB)), 0.03));
+                if (lv > 0.01) sampleMip(bpyr, bu, bv, lv, cB);
+                else sample(back.data, back.w, back.h, bu, bv, cB);
+              } else {
+                sampleDisc(back.data, back.w, back.h, 0.5 + dz * bhs, 0.5 - dy * bhs, cB);
+              }
+              br = cB[0];
+              bg = cB[1];
+              bb = cB[2];
+            } else if (mode === "gradient") {
+              let dn = (dx + 1) / gRange;
+              dn = dn < 0 ? 0 : dn > 1 ? 1 : dn;
+              const t = smooth((dn - gInner) * gInv + 0.5);
+              const aa = a1 * (1 - t) + a2 * t;
+              br = r * (1 - aa) + g1R * (1 - t) + g2R * t;
+              bg = g * (1 - aa) + g1G * (1 - t) + g2G * t;
+              bb = bl * (1 - aa) + g1B * (1 - t) + g2B * t;
+            } else if (mode === "color") {
+              br = r * (1 - sA) + sR;
+              bg = g * (1 - sA) + sG;
+              bb = bl * (1 - sA) + sB;
+            } else {
+              const bt = rimDen > 1e-3 ? smooth((rimCos - dx) / rimDen) : 0;
+              sampleMip(pyr, uF, vF, Math.pow(bt, 1.3) * maxLevel, cB);
+              br = cB[0];
+              bg = cB[1];
+              bb = cB[2];
+            }
+            r = r * (1 - tB) + br * tB;
+            g = g * (1 - tB) + bg * tB;
+            bl = bl * (1 - tB) + bb * tB;
+          }
+          if (soft > 0) {
+            sampleMip(pyr, uF, vF, soft * maxLevel, cS);
+            r = r * (1 - soft) + cS[0] * soft;
+            g = g * (1 - soft) + cS[1] * soft;
+            bl = bl * (1 - soft) + cS[2] * soft;
+          }
+          buf[off] = r;
+          buf[off + 1] = g;
+          buf[off + 2] = bl;
+          buf[off + 3] = 255;
+        }
+      }
+      faces[face] = buf;
+    }
+    return faces;
+  }
+  async function startNext() {
+    if (running || !queued) return;
+    const m = queued;
+    queued = null;
+    const job = (running = { final: m.final, aborted: false });
+    try {
+      const faces = await generate(m.size, m.p, job);
+      if (faces) {
+        post(
+          { type: "faces", seq: m.seq, size: m.size, final: m.final, faces },
+          FACES2.map((f) => faces[f].buffer),
+        );
+      }
+    } catch (err) {
+      post({ type: "error", message: String((err && err.stack) || err) });
+    }
+    running = null;
+    startNext();
+  }
+  return {
+    handle(m) {
+      switch (m.type) {
+        case "setBase":
+          if (running) running.aborted = true;
+          base = { data: m.data, w: m.w, h: m.h };
+          baseVer++;
+          break;
+        case "setLayer":
+          if (running) running.aborted = true;
+          if (m.data) layerPx.set(m.id, m.data);
+          else layerPx.delete(m.id);
+          layerVer++;
+          break;
+        case "setBack":
+          if (running) running.aborted = true;
+          back = m.data ? { data: m.data, w: m.w, h: m.h } : null;
+          backPyr = null;
+          break;
+        case "setEnv":
+          if (running) running.aborted = true;
+          setEnv(m);
+          break;
+        case "render":
+          if (!base && !env) return;
+          queued = m;
+          if (running && running.final) running.aborted = true;
+          startNext();
+          break;
+      }
+    },
+  };
+}
+const engine = (() => {
+  try {
+    const code = `const core=(${createEngineCore.toString()})((m,t)=>self.postMessage(m,t));self.onmessage=e=>core.handle(e.data);`;
+    const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+    const worker = new Worker(url);
+    worker.onmessage = (e) => handleEngineMessage(e.data);
+    worker.onerror = (e) => console.error("Render worker error:", e.message);
+    return { send: (m, transfer) => worker.postMessage(m, transfer || []) };
+  } catch (err) {
+    console.warn("Web Worker unavailable, rendering on the main thread.", err);
+    const core = createEngineCore((m) => setTimeout(() => handleEngineMessage(m), 0));
+    return { send: (m) => setTimeout(() => core.handle(m), 0) };
+  }
 })();
-
-let baseReady = false, srcW = 0, srcH = 0;
+let baseReady = false,
+  srcW = 0,
+  srcH = 0;
 let envState = null;
 let sourceVer = 0;
-let generatedFaces = null, generatedSize = 0;
+let generatedFaces = null,
+  generatedSize = 0;
 let backBmp = null;
 let isBallDragging = false;
-
 let renderTimer = null;
-let renderSeq = 0, shownSeq = 0;
+let renderSeq = 0,
+  shownSeq = 0;
 const DRAFT_SIZE = 128;
 const FINAL_DELAY = 250;
-
 const colorState = {
-    solid: { rgb: [26, 26, 26], a: 1 },
-    grad1: { rgb: [13, 110, 253], a: 1 },
-    grad2: { rgb: [17, 24, 39], a: 1 }
+  solid: { rgb: [26, 26, 26], a: 1 },
+  grad1: { rgb: [13, 110, 253], a: 1 },
+  grad2: { rgb: [17, 24, 39], a: 1 },
 };
-
 const MAX_LAYERS = 16;
 const THUMB_PX = 128;
-
-const generateBtn = document.getElementById('generateBtn');
-const resultArea = document.getElementById('resultArea');
-const appMain = document.getElementById('appMain');
-const mainPlaceholder = document.getElementById('mainPlaceholder');
-const baseSlotHost = document.getElementById('baseSlotHost');
-const baseInfo = document.getElementById('baseInfo');
-const baseName = document.getElementById('baseName');
-const baseDims = document.getElementById('baseDims');
-const layersContainer = document.getElementById('layersContainer');
-const addLayerBtn = document.getElementById('addLayerBtn');
-
-const rotXInput = document.getElementById('rotX');
-const rotYInput = document.getElementById('rotY');
-const rotZInput = document.getElementById('rotZ');
-const ballController = document.getElementById('ballController');
-const ballHandle = document.getElementById('ballHandle');
-
-document.addEventListener('dragstart', e => e.preventDefault());
-
-const isImageFile = f => !!f && (f.type.startsWith('image/') || /\.(png|jpe?g|webp|bmp|gif|avif)$/i.test(f.name));
-const closeBmp = b => { if (b && typeof b.close === 'function') b.close(); };
-
+const generateBtn = document.getElementById("generateBtn");
+const resultArea = document.getElementById("resultArea");
+const appMain = document.getElementById("appMain");
+const mainPlaceholder = document.getElementById("mainPlaceholder");
+const baseSlotHost = document.getElementById("baseSlotHost");
+const baseInfo = document.getElementById("baseInfo");
+const baseName = document.getElementById("baseName");
+const baseDims = document.getElementById("baseDims");
+const layersContainer = document.getElementById("layersContainer");
+const addLayerBtn = document.getElementById("addLayerBtn");
+const rotXInput = document.getElementById("rotX");
+const rotYInput = document.getElementById("rotY");
+const rotZInput = document.getElementById("rotZ");
+const ballController = document.getElementById("ballController");
+const ballHandle = document.getElementById("ballHandle");
+document.addEventListener("dragstart", (e) => e.preventDefault());
+const isImageFile = (f) =>
+  !!f && (f.type.startsWith("image/") || /\.(png|jpe?g|webp|bmp|gif|avif)$/i.test(f.name));
+const closeBmp = (b) => {
+  if (b && typeof b.close === "function") b.close();
+};
 async function decodeImage(file) {
-    if (!isImageFile(file)) return null;
+  if (!isImageFile(file)) return null;
+  try {
+    return await createImageBitmap(file);
+  } catch (e) {
     try {
-        return await createImageBitmap(file);
-    } catch (e) {
-        try {
-            const url = URL.createObjectURL(file);
-            const img = await new Promise((res, rej) => {
-                const i = new Image();
-                i.onload = () => res(i);
-                i.onerror = rej;
-                i.src = url;
-            });
-            URL.revokeObjectURL(url);
-            const c = document.createElement('canvas');
-            c.width = img.naturalWidth; c.height = img.naturalHeight;
-            c.getContext('2d').drawImage(img, 0, 0);
-            return c;
-        } catch (e2) {
-            return null;
-        }
+      const url = URL.createObjectURL(file);
+      const img = await new Promise((res, rej) => {
+        const i = new Image();
+        i.onload = () => res(i);
+        i.onerror = rej;
+        i.src = url;
+      });
+      URL.revokeObjectURL(url);
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      c.getContext("2d").drawImage(img, 0, 0);
+      return c;
+    } catch (e2) {
+      return null;
     }
+  }
 }
-
-const scratchCanvas = document.createElement('canvas');
+const scratchCanvas = document.createElement("canvas");
 function rasterize(src, w, h) {
-    scratchCanvas.width = w;
-    scratchCanvas.height = h;
-    const ctx = scratchCanvas.getContext('2d', { willReadFrequently: true });
-    ctx.imageSmoothingQuality = 'high';
-    ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(src, 0, 0, w, h);
-    return ctx.getImageData(0, 0, w, h).data;
+  scratchCanvas.width = w;
+  scratchCanvas.height = h;
+  const ctx = scratchCanvas.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingQuality = "high";
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(src, 0, 0, w, h);
+  return ctx.getImageData(0, 0, w, h).data;
 }
-
 function drawCover(ctx, bmp, size, fit) {
-    const s = Math.max(size / bmp.width, size / bmp.height);
-    const dw = bmp.width * s, dh = bmp.height * s;
-    const ox = (size - dw) / 2, oy = (size - dh) / 2;
-    ctx.clearRect(0, 0, size, size);
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(bmp, ox, oy, dw, dh);
-    if (fit) {
-        const cx = ox + fit.cx * dw, cy = oy + fit.cy * dh;
-        const r = fit.r * Math.min(bmp.width, bmp.height) * s;
-        ctx.save();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = '#ff2d95';
-        ctx.setLineDash([6, 4]);
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-    }
+  const s = Math.max(size / bmp.width, size / bmp.height);
+  const dw = bmp.width * s,
+    dh = bmp.height * s;
+  const ox = (size - dw) / 2,
+    oy = (size - dh) / 2;
+  ctx.clearRect(0, 0, size, size);
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bmp, ox, oy, dw, dh);
+  if (fit) {
+    const cx = ox + fit.cx * dw,
+      cy = oy + fit.cy * dh;
+    const r = fit.r * Math.min(bmp.width, bmp.height) * s;
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#ff2d95";
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
-
 function normalizeMatcap(src, fit, size) {
-    const w = src.width, h = src.height;
-    const R = fit.r * Math.min(w, h);
-    const c = document.createElement('canvas');
-    c.width = c.height = size;
-    const ctx = c.getContext('2d');
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(src, fit.cx * w - R, fit.cy * h - R, 2 * R, 2 * R, 0, 0, size, size);
-    return c;
+  const w = src.width,
+    h = src.height;
+  const R = fit.r * Math.min(w, h);
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, fit.cx * w - R, fit.cy * h - R, 2 * R, 2 * R, 0, 0, size, size);
+  return c;
 }
-
 function fitOutSize(bmp, fit) {
-    const s = Math.round(2 * fit.r * Math.min(bmp.width, bmp.height));
-    return Math.max(64, Math.min(2048, s));
+  const s = Math.round(2 * fit.r * Math.min(bmp.width, bmp.height));
+  return Math.max(64, Math.min(2048, s));
 }
-
 function detectDisc(bmp) {
-    const k = Math.min(1, 512 / Math.max(bmp.width, bmp.height));
-    const w = Math.max(8, Math.round(bmp.width * k));
-    const h = Math.max(8, Math.round(bmp.height * k));
-    const cv = document.createElement('canvas');
-    cv.width = w; cv.height = h;
-    const ctx = cv.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(bmp, 0, 0, w, h);
-    const d = ctx.getImageData(0, 0, w, h).data;
-
-    const at = (x, y) => {
-        x = Math.max(0, Math.min(w - 1, x)); y = Math.max(0, Math.min(h - 1, y));
-        const i = (y * w + x) * 4;
-        return [d[i], d[i + 1], d[i + 2], d[i + 3]];
-    };
-    const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-
-    let box = { x0: 0, y0: 0, x1: w - 1, y1: h - 1 };
-    let found = null;
-
-    for (let iter = 0; iter < 3; iter++) {
-        const cols = [
-            at(box.x0 + 1, box.y0 + 1), at(box.x1 - 1, box.y0 + 1),
-            at(box.x0 + 1, box.y1 - 1), at(box.x1 - 1, box.y1 - 1)
-        ];
-        const alphaBg = cols.every(c => c[3] < 16);
-        let bg = [0, 0, 0, 255];
-        if (!alphaBg) {
-            if (cols.some(c => dist(c, cols[0]) > 40)) break;
-            bg = cols[0];
-        }
-        const rowCnt = new Int32Array(h), colCnt = new Int32Array(w);
-        let total = 0;
-        for (let y = box.y0; y <= box.y1; y++) {
-            for (let x = box.x0; x <= box.x1; x++) {
-                const p = at(x, y);
-                const on = alphaBg ? p[3] > 16 : (p[3] > 16 && dist(p, bg) > 24);
-                if (on) { rowCnt[y]++; colCnt[x]++; total++; }
-            }
-        }
-        let x0 = -1, x1 = -1, y0 = -1, y1 = -1;
-        for (let x = 0; x < w; x++) if (colCnt[x] >= 2) { if (x0 < 0) x0 = x; x1 = x; }
-        for (let y = 0; y < h; y++) if (rowCnt[y] >= 2) { if (y0 < 0) y0 = y; y1 = x; }
-        if (x0 < 0 || y0 < 0) break;
-
-        const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-        found = { x0, y0, x1, y1, bw, bh };
-        const fill = total / (bw * bh);
-        const shrunk = (box.x1 - box.x0 + 1 - bw) > 2 || (box.y1 - box.y0 + 1 - bh) > 2;
-        if (fill > 0.92 && shrunk) { box = { x0, y0, x1, y1 }; continue; }
-        break;
+  const k = Math.min(1, 512 / Math.max(bmp.width, bmp.height));
+  const w = Math.max(8, Math.round(bmp.width * k));
+  const h = Math.max(8, Math.round(bmp.height * k));
+  const cv = document.createElement("canvas");
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bmp, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h).data;
+  const at = (x2, y) => {
+    x2 = Math.max(0, Math.min(w - 1, x2));
+    y = Math.max(0, Math.min(h - 1, y));
+    const i = (y * w + x2) * 4;
+    return [d[i], d[i + 1], d[i + 2], d[i + 3]];
+  };
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  let box = { x0: 0, y0: 0, x1: w - 1, y1: h - 1 };
+  let found = null;
+  for (let iter = 0; iter < 3; iter++) {
+    const cols = [
+      at(box.x0 + 1, box.y0 + 1),
+      at(box.x1 - 1, box.y0 + 1),
+      at(box.x0 + 1, box.y1 - 1),
+      at(box.x1 - 1, box.y1 - 1),
+    ];
+    const alphaBg = cols.every((c) => c[3] < 16);
+    let bg = [0, 0, 0, 255];
+    if (!alphaBg) {
+      if (cols.some((c) => dist(c, cols[0]) > 40)) break;
+      bg = cols[0];
     }
-    if (!found) return null;
-
-    let cx = (found.x0 + found.x1 + 1) / 2 / w;
-    let cy = (found.y0 + found.y1 + 1) / 2 / h;
-    let r = ((found.bw + found.bh) / 4) / Math.min(w, h);
-    if (r < 0.15 || r > 0.75) return null;
-    if (r > 0.49 && Math.abs(cx - 0.5) < 0.01 && Math.abs(cy - 0.5) < 0.01) { cx = 0.5; cy = 0.5; r = 0.5; }
-    return { cx, cy, r };
+    const rowCnt = new Int32Array(h),
+      colCnt = new Int32Array(w);
+    let total = 0;
+    for (let y = box.y0; y <= box.y1; y++) {
+      for (let x2 = box.x0; x2 <= box.x1; x2++) {
+        const p = at(x2, y);
+        const on = alphaBg ? p[3] > 16 : p[3] > 16 && dist(p, bg) > 24;
+        if (on) {
+          rowCnt[y]++;
+          colCnt[x2]++;
+          total++;
+        }
+      }
+    }
+    let x0 = -1,
+      x1 = -1,
+      y0 = -1,
+      y1 = -1;
+    for (let x2 = 0; x2 < w; x2++)
+      if (colCnt[x2] >= 2) {
+        if (x0 < 0) x0 = x2;
+        x1 = x2;
+      }
+    for (let y = 0; y < h; y++)
+      if (rowCnt[y] >= 2) {
+        if (y0 < 0) y0 = y;
+        y1 = x;
+      }
+    if (x0 < 0 || y0 < 0) break;
+    const bw = x1 - x0 + 1,
+      bh = y1 - y0 + 1;
+    found = { x0, y0, x1, y1, bw, bh };
+    const fill = total / (bw * bh);
+    const shrunk = box.x1 - box.x0 + 1 - bw > 2 || box.y1 - box.y0 + 1 - bh > 2;
+    if (fill > 0.92 && shrunk) {
+      box = { x0, y0, x1, y1 };
+      continue;
+    }
+    break;
+  }
+  if (!found) return null;
+  let cx = (found.x0 + found.x1 + 1) / 2 / w;
+  let cy = (found.y0 + found.y1 + 1) / 2 / h;
+  let r = (found.bw + found.bh) / 4 / Math.min(w, h);
+  if (r < 0.15 || r > 0.75) return null;
+  if (r > 0.49 && Math.abs(cx - 0.5) < 0.01 && Math.abs(cy - 0.5) < 0.01) {
+    cx = 0.5;
+    cy = 0.5;
+    r = 0.5;
+  }
+  return { cx, cy, r };
 }
-
 function createFitPanel({ getBitmap, onChange }) {
-    const fit = { cx: 0.5, cy: 0.5, r: 0.5 };
-    const el = document.createElement('details');
-    el.className = 'fit-panel mt-2';
-    el.innerHTML = `
+  const fit = { cx: 0.5, cy: 0.5, r: 0.5 };
+  const el = document.createElement("details");
+  el.className = "fit-panel mt-2";
+  el.innerHTML = `
         <summary>Circle fit</summary>
         <div class="pt-2">
             <div class="d-flex justify-content-between small text-muted"><span>Circle size</span><span><strong data-v="d">100</strong>%</span></div>
@@ -749,328 +829,327 @@ function createFitPanel({ getBitmap, onChange }) {
                 <button type="button" class="btn btn-sm btn-outline-secondary flex-fill" data-act="reset">Reset</button>
             </div>
         </div>`;
-    const q = s => el.querySelector(s);
-    const inD = q('[data-k="d"]'), inX = q('[data-k="x"]'), inY = q('[data-k="y"]');
-
-    function syncUI() {
-        inD.value = fit.r * 200; inX.value = (fit.cx - 0.5) * 100; inY.value = (fit.cy - 0.5) * 100;
-        q('[data-v="d"]').textContent = (fit.r * 200).toFixed(1);
-        q('[data-v="x"]').textContent = ((fit.cx - 0.5) * 100).toFixed(1);
-        q('[data-v="y"]').textContent = ((fit.cy - 0.5) * 100).toFixed(1);
-    }
-    function readUI() {
-        fit.r = parseFloat(inD.value) / 200;
-        fit.cx = 0.5 + parseFloat(inX.value) / 100;
-        fit.cy = 0.5 + parseFloat(inY.value) / 100;
-        syncUI();
-    }
-    [inD, inX, inY].forEach(inp => {
-        inp.addEventListener('input', () => { readUI(); onChange(true); });
-        inp.addEventListener('change', () => { readUI(); onChange(false); });
+  const q = (s) => el.querySelector(s);
+  const inD = q('[data-k="d"]'),
+    inX = q('[data-k="x"]'),
+    inY = q('[data-k="y"]');
+  function syncUI() {
+    inD.value = fit.r * 200;
+    inX.value = (fit.cx - 0.5) * 100;
+    inY.value = (fit.cy - 0.5) * 100;
+    q('[data-v="d"]').textContent = (fit.r * 200).toFixed(1);
+    q('[data-v="x"]').textContent = ((fit.cx - 0.5) * 100).toFixed(1);
+    q('[data-v="y"]').textContent = ((fit.cy - 0.5) * 100).toFixed(1);
+  }
+  function readUI() {
+    fit.r = parseFloat(inD.value) / 200;
+    fit.cx = 0.5 + parseFloat(inX.value) / 100;
+    fit.cy = 0.5 + parseFloat(inY.value) / 100;
+    syncUI();
+  }
+  [inD, inX, inY].forEach((inp) => {
+    inp.addEventListener("input", () => {
+      readUI();
+      onChange(true);
     });
-    q('[data-act="auto"]').addEventListener('click', () => {
-        const bmp = getBitmap();
-        if (!bmp) return;
-        const r = detectDisc(bmp) || { cx: 0.5, cy: 0.5, r: 0.5 };
-        Object.assign(fit, r); syncUI(); onChange(false);
+    inp.addEventListener("change", () => {
+      readUI();
+      onChange(false);
     });
-    q('[data-act="reset"]').addEventListener('click', () => {
-        Object.assign(fit, { cx: 0.5, cy: 0.5, r: 0.5 }); syncUI(); onChange(false);
-    });
-
-    return {
-        el, fit,
-        autoFit(bmp) {
-            Object.assign(fit, detectDisc(bmp) || { cx: 0.5, cy: 0.5, r: 0.5 });
-            syncUI();
-        }
-    };
+  });
+  q('[data-act="auto"]').addEventListener("click", () => {
+    const bmp = getBitmap();
+    if (!bmp) return;
+    const r = detectDisc(bmp) || { cx: 0.5, cy: 0.5, r: 0.5 };
+    Object.assign(fit, r);
+    syncUI();
+    onChange(false);
+  });
+  q('[data-act="reset"]').addEventListener("click", () => {
+    Object.assign(fit, { cx: 0.5, cy: 0.5, r: 0.5 });
+    syncUI();
+    onChange(false);
+  });
+  return {
+    el,
+    fit,
+    autoFit(bmp) {
+      Object.assign(fit, detectDisc(bmp) || { cx: 0.5, cy: 0.5, r: 0.5 });
+      syncUI();
+    },
+  };
 }
-
-function createSlot({ caption = '', large = false, clearable = false, accept = 'image/*', onFile, onClear }) {
-    const wrap = document.createElement('div');
-    wrap.className = 'slot-wrap';
-    wrap.innerHTML = `
-        <div class="slot${large ? ' slot-lg' : ''}" tabindex="0" role="button" title="Click or drop an image">
+function createSlot({ caption = "", large = false, clearable = false, accept = "image/*", onFile, onClear }) {
+  const wrap = document.createElement("div");
+  wrap.className = "slot-wrap";
+  wrap.innerHTML = `
+        <div class="slot${large ? " slot-lg" : ""}" tabindex="0" role="button" title="Click or drop an image">
             <canvas width="${THUMB_PX}" height="${THUMB_PX}" draggable="false"></canvas>
-            ${clearable ? '<button type="button" class="slot-clear" title="Remove" aria-label="Remove">×</button>' : ''}
+            ${clearable ? '<button type="button" class="slot-clear" title="Remove" aria-label="Remove">×</button>' : ""}
         </div>
-        ${caption ? `<div class="slot-caption">${caption}</div>` : ''}
+        ${caption ? `<div class="slot-caption">${caption}</div>` : ""}
         <input type="file" hidden accept="${accept}">`;
-
-    const slotEl = wrap.querySelector('.slot');
-    const ctx = wrap.querySelector('canvas').getContext('2d');
-    const input = wrap.querySelector('input');
-    const clearBtn = wrap.querySelector('.slot-clear');
-
-    const api = {
-        el: wrap,
-        open: () => input.click(),
-        setPreview(bmp, fit) {
-            drawCover(ctx, bmp, THUMB_PX, fit);
-            slotEl.classList.add('filled');
-        },
-        clear() {
-            ctx.clearRect(0, 0, THUMB_PX, THUMB_PX);
-            slotEl.classList.remove('filled');
-        }
-    };
-
-    slotEl.addEventListener('click', e => {
-        if (e.target.closest('.slot-clear')) return;
-        input.click();
-    });
-    slotEl.addEventListener('keydown', e => {
-        if (e.target === slotEl && (e.key === 'Enter' || e.key === ' ')) {
-            e.preventDefault();
-            input.click();
-        }
-    });
-    input.addEventListener('change', () => {
-        const file = input.files[0];
-        input.value = '';
-        if (file) onFile(file);
-    });
-    if (clearBtn) {
-        clearBtn.addEventListener('click', e => {
-            e.stopPropagation();
-            api.clear();
-            if (onClear) onClear();
-        });
+  const slotEl = wrap.querySelector(".slot");
+  const ctx = wrap.querySelector("canvas").getContext("2d");
+  const input = wrap.querySelector("input");
+  const clearBtn = wrap.querySelector(".slot-clear");
+  const api = {
+    el: wrap,
+    open: () => input.click(),
+    setPreview(bmp, fit) {
+      drawCover(ctx, bmp, THUMB_PX, fit);
+      slotEl.classList.add("filled");
+    },
+    clear() {
+      ctx.clearRect(0, 0, THUMB_PX, THUMB_PX);
+      slotEl.classList.remove("filled");
+    },
+  };
+  slotEl.addEventListener("click", (e) => {
+    if (e.target.closest(".slot-clear")) return;
+    input.click();
+  });
+  slotEl.addEventListener("keydown", (e) => {
+    if (e.target === slotEl && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      input.click();
     }
-    slotEl.addEventListener('dragover', e => {
-        e.preventDefault();
-        slotEl.classList.add('dragover');
+  });
+  input.addEventListener("change", () => {
+    const file = input.files[0];
+    input.value = "";
+    if (file) onFile(file);
+  });
+  if (clearBtn) {
+    clearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      api.clear();
+      if (onClear) onClear();
     });
-    slotEl.addEventListener('dragleave', () => slotEl.classList.remove('dragover'));
-    slotEl.addEventListener('drop', e => {
-        e.preventDefault();
-        e.stopPropagation();
-        slotEl.classList.remove('dragover');
-        const file = e.dataTransfer.files[0];
-        if (file) onFile(file);
-    });
-
-    return api;
+  }
+  slotEl.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    slotEl.classList.add("dragover");
+  });
+  slotEl.addEventListener("dragleave", () => slotEl.classList.remove("dragover"));
+  slotEl.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    slotEl.classList.remove("dragover");
+    const file = e.dataTransfer.files[0];
+    if (file) onFile(file);
+  });
+  return api;
 }
-
 let baseSeq = 0;
 let baseBmp = null;
-const baseSlot = createSlot({ large: true, clearable: true, accept: 'image/*,.vtf', onFile: loadBase, onClear: () => clearBase() });
+const baseSlot = createSlot({
+  large: true,
+  clearable: true,
+  accept: "image/*,.vtf",
+  onFile: loadBase,
+  onClear: () => clearBase(),
+});
 baseSlotHost.appendChild(baseSlot.el);
-
 const baseFit = createFitPanel({
-    getBitmap: () => baseBmp,
-    onChange: draft => applyBase(draft)
+  getBitmap: () => baseBmp,
+  onChange: (draft) => applyBase(draft),
 });
-document.getElementById('baseFitHost').appendChild(baseFit.el);
-
+document.getElementById("baseFitHost").appendChild(baseFit.el);
 async function loadBase(file) {
-    if (isVtfFile(file)) return loadEnvVtf(file);
-    const seq = ++baseSeq;
-    const bmp = await decodeImage(file);
-    if (!bmp) return;
-    if (seq !== baseSeq) { closeBmp(bmp); return; }
-
-    if (envState) clearEnv();
-    closeBmp(baseBmp);
-    baseBmp = bmp;
-    baseFit.autoFit(bmp);
-
-    baseName.textContent = file.name;
-    baseInfo.hidden = false;
-    applyBase(false);
+  if (isVtfFile(file)) return loadEnvVtf(file);
+  const seq = ++baseSeq;
+  const bmp = await decodeImage(file);
+  if (!bmp) return;
+  if (seq !== baseSeq) {
+    closeBmp(bmp);
+    return;
+  }
+  if (envState) clearEnv();
+  closeBmp(baseBmp);
+  baseBmp = bmp;
+  baseFit.autoFit(bmp);
+  baseName.textContent = file.name;
+  baseInfo.hidden = false;
+  applyBase(false);
 }
-
 function applyBase(draft) {
-    if (!baseBmp) return;
-    sourceVer++;
-    const fit = baseFit.fit;
-    const size = fitOutSize(baseBmp, fit);
-    const px = rasterize(normalizeMatcap(baseBmp, fit, size), size, size);
-    srcW = size; srcH = size;
-    baseReady = true;
-    engine.send({ type: 'setBase', data: px, w: size, h: size }, [px.buffer]);
-
-    baseSlot.setPreview(baseBmp, fit);
-    baseDims.textContent = `${baseBmp.width} × ${baseBmp.height}  →  sphere ${size} px`;
-
-    layers.forEach(l => rebuildCache(l));
-
-    generateBtn.disabled = false;
-    ['dlAnimPack', 'dlAnimHdr'].forEach(id => {
-        const b = document.getElementById(id);
-        if (b) b.disabled = false;
-    });
-    triggerRender(draft);
+  if (!baseBmp) return;
+  sourceVer++;
+  const fit = baseFit.fit;
+  const size = fitOutSize(baseBmp, fit);
+  const px = rasterize(normalizeMatcap(baseBmp, fit, size), size, size);
+  srcW = size;
+  srcH = size;
+  baseReady = true;
+  engine.send({ type: "setBase", data: px, w: size, h: size }, [px.buffer]);
+  baseSlot.setPreview(baseBmp, fit);
+  baseDims.textContent = `${baseBmp.width} × ${baseBmp.height}  →  sphere ${size} px`;
+  layers.forEach((l) => rebuildCache(l));
+  generateBtn.disabled = false;
+  ["dlAnimPack", "dlAnimHdr"].forEach((id) => {
+    const b = document.getElementById(id);
+    if (b) b.disabled = false;
+  });
+  triggerRender(draft);
 }
-
 const backMatcapSlot = createSlot({
-    caption: 'Back Matcap',
-    clearable: true,
-    onFile: loadBackMatcap,
-    onClear: clearBackMatcap
+  caption: "Back Matcap",
+  clearable: true,
+  onFile: loadBackMatcap,
+  onClear: clearBackMatcap,
 });
-const backMatcapSlotHost = document.getElementById('backMatcapSlotHost');
+const backMatcapSlotHost = document.getElementById("backMatcapSlotHost");
 if (backMatcapSlotHost) {
-    backMatcapSlotHost.appendChild(backMatcapSlot.el);
+  backMatcapSlotHost.appendChild(backMatcapSlot.el);
 }
-
 const backFit = createFitPanel({
-    getBitmap: () => backBmp,
-    onChange: draft => applyBack(draft)
+  getBitmap: () => backBmp,
+  onChange: (draft) => applyBack(draft),
 });
-const backFitHost = document.getElementById('backFitHost');
+const backFitHost = document.getElementById("backFitHost");
 if (backFitHost) backFitHost.appendChild(backFit.el);
-
 async function loadBackMatcap(file) {
-    const bmp = await decodeImage(file);
-    if (!bmp) return;
-    closeBmp(backBmp);
-    backBmp = bmp;
-    backFit.autoFit(bmp);
-    applyBack(false);
+  const bmp = await decodeImage(file);
+  if (!bmp) return;
+  closeBmp(backBmp);
+  backBmp = bmp;
+  backFit.autoFit(bmp);
+  applyBack(false);
 }
-
 function applyBack(draft) {
-    if (!backBmp) return;
-    sourceVer++;
-    const size = fitOutSize(backBmp, backFit.fit);
-    const px = rasterize(normalizeMatcap(backBmp, backFit.fit, size), size, size);
-    engine.send({ type: 'setBack', data: px, w: size, h: size }, [px.buffer]);
-    backMatcapSlot.setPreview(backBmp, backFit.fit);
-    triggerRender(draft);
+  if (!backBmp) return;
+  sourceVer++;
+  const size = fitOutSize(backBmp, backFit.fit);
+  const px = rasterize(normalizeMatcap(backBmp, backFit.fit, size), size, size);
+  engine.send({ type: "setBack", data: px, w: size, h: size }, [px.buffer]);
+  backMatcapSlot.setPreview(backBmp, backFit.fit);
+  triggerRender(draft);
 }
-
 function clearBackMatcap() {
-    sourceVer++;
-    closeBmp(backBmp);
-    backBmp = null;
-    engine.send({ type: 'setBack', data: null });
-    backMatcapSlot.clear();
-    triggerRender(false);
+  sourceVer++;
+  closeBmp(backBmp);
+  backBmp = null;
+  engine.send({ type: "setBack", data: null });
+  backMatcapSlot.clear();
+  triggerRender(false);
 }
-
 function hexToRgb(hex) {
-    hex = hex.replace(/^#/, '');
-    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
-    const num = parseInt(hex, 16);
-    return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+  hex = hex.replace(/^#/, "");
+  if (hex.length === 3)
+    hex = hex
+      .split("")
+      .map((c) => c + c)
+      .join("");
+  const num = parseInt(hex, 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
 }
-
 async function pickWithPipette(onColor) {
-    if (window.EyeDropper) {
-        try {
-            const res = await new EyeDropper().open();
-            if (res && res.sRGBHex) onColor(res.sRGBHex);
-        } catch (err) {}
-    }
+  if (window.EyeDropper) {
+    try {
+      const res = await new EyeDropper().open();
+      if (res && res.sRGBHex) onColor(res.sRGBHex);
+    } catch (err) {}
+  }
 }
-
 function bindColorControl(key, { picker, alpha, alphaVal, pipette, hexLabel }) {
-    if (!picker || !alpha) return;
-    const st = colorState[key];
-
-    const apply = (isDraft, render = true) => {
-        st.rgb = hexToRgb(picker.value);
-        st.a = parseFloat(alpha.value) / 100;
-        if (hexLabel) hexLabel.textContent = picker.value;
-        if (alphaVal) alphaVal.textContent = Math.round(parseFloat(alpha.value));
-        alpha.style.setProperty('--alpha-color', picker.value);
-        if (render) triggerRender(isDraft);
-    };
-
-    picker.addEventListener('input', () => apply(true));
-    picker.addEventListener('change', () => apply(false));
-    alpha.addEventListener('input', () => apply(true));
-    alpha.addEventListener('change', () => apply(false));
-
-    if (pipette) {
-        pipette.addEventListener('click', () => {
-            if (window.EyeDropper) {
-                pickWithPipette(hex => { picker.value = hex; apply(false); });
-            } else {
-                picker.click();
-            }
+  if (!picker || !alpha) return;
+  const st = colorState[key];
+  const apply = (isDraft, render = true) => {
+    st.rgb = hexToRgb(picker.value);
+    st.a = parseFloat(alpha.value) / 100;
+    if (hexLabel) hexLabel.textContent = picker.value;
+    if (alphaVal) alphaVal.textContent = Math.round(parseFloat(alpha.value));
+    alpha.style.setProperty("--alpha-color", picker.value);
+    if (render) triggerRender(isDraft);
+  };
+  picker.addEventListener("input", () => apply(true));
+  picker.addEventListener("change", () => apply(false));
+  alpha.addEventListener("input", () => apply(true));
+  alpha.addEventListener("change", () => apply(false));
+  if (pipette) {
+    pipette.addEventListener("click", () => {
+      if (window.EyeDropper) {
+        pickWithPipette((hex) => {
+          picker.value = hex;
+          apply(false);
         });
-    }
-    apply(false, false);
+      } else {
+        picker.click();
+      }
+    });
+  }
+  apply(false, false);
 }
-
-bindColorControl('solid', {
-    picker: document.getElementById('backColorPicker'),
-    alpha: document.getElementById('backColorAlpha'),
-    alphaVal: document.getElementById('backColorAlphaVal'),
-    pipette: document.getElementById('pipetteBtn'),
-    hexLabel: document.getElementById('backColorHex')
+bindColorControl("solid", {
+  picker: document.getElementById("backColorPicker"),
+  alpha: document.getElementById("backColorAlpha"),
+  alphaVal: document.getElementById("backColorAlphaVal"),
+  pipette: document.getElementById("pipetteBtn"),
+  hexLabel: document.getElementById("backColorHex"),
 });
-bindColorControl('grad1', {
-    picker: document.getElementById('gradColor1Picker'),
-    alpha: document.getElementById('gradColor1Alpha'),
-    alphaVal: document.getElementById('gradColor1AlphaVal'),
-    pipette: document.getElementById('pipetteGrad1')
+bindColorControl("grad1", {
+  picker: document.getElementById("gradColor1Picker"),
+  alpha: document.getElementById("gradColor1Alpha"),
+  alphaVal: document.getElementById("gradColor1AlphaVal"),
+  pipette: document.getElementById("pipetteGrad1"),
 });
-bindColorControl('grad2', {
-    picker: document.getElementById('gradColor2Picker'),
-    alpha: document.getElementById('gradColor2Alpha'),
-    alphaVal: document.getElementById('gradColor2AlphaVal'),
-    pipette: document.getElementById('pipetteGrad2')
+bindColorControl("grad2", {
+  picker: document.getElementById("gradColor2Picker"),
+  alpha: document.getElementById("gradColor2Alpha"),
+  alphaVal: document.getElementById("gradColor2AlphaVal"),
+  pipette: document.getElementById("pipetteGrad2"),
 });
-
 const layers = [];
 let nextLayerId = 1;
-
 function rebuildCache(layer) {
-    sourceVer++;
-    if (layer.matcap && baseReady) {
-        const px = rasterize(normalizeMatcap(layer.matcap, layer.fitPanel.fit, srcW), srcW, srcH);
-        layer.hasPx = true;
-        engine.send({ type: 'setLayer', id: layer.id, data: px }, [px.buffer]);
-    } else {
-        layer.hasPx = false;
-        engine.send({ type: 'setLayer', id: layer.id, data: null });
-    }
+  sourceVer++;
+  if (layer.matcap && baseReady) {
+    const px = rasterize(normalizeMatcap(layer.matcap, layer.fitPanel.fit, srcW), srcW, srcH);
+    layer.hasPx = true;
+    engine.send({ type: "setLayer", id: layer.id, data: px }, [px.buffer]);
+  } else {
+    layer.hasPx = false;
+    engine.send({ type: "setLayer", id: layer.id, data: null });
+  }
 }
-
 function layersChanged() {
-    triggerRender(false);
+  triggerRender(false);
 }
-
 async function setLayerImage(layer, slot, file) {
-    const seq = (layer.seq = (layer.seq || 0) + 1);
-    const bmp = await decodeImage(file);
-    if (!bmp) return;
-    if (layer.removed || seq !== layer.seq) { closeBmp(bmp); return; }
-    closeBmp(layer.matcap);
-    layer.matcap = bmp;
-    layer.fitPanel.autoFit(bmp);
-    slot.setPreview(bmp, layer.fitPanel.fit);
-    rebuildCache(layer);
-    layersChanged();
+  const seq = (layer.seq = (layer.seq || 0) + 1);
+  const bmp = await decodeImage(file);
+  if (!bmp) return;
+  if (layer.removed || seq !== layer.seq) {
+    closeBmp(bmp);
+    return;
+  }
+  closeBmp(layer.matcap);
+  layer.matcap = bmp;
+  layer.fitPanel.autoFit(bmp);
+  slot.setPreview(bmp, layer.fitPanel.fit);
+  rebuildCache(layer);
+  layersChanged();
 }
-
 function clearLayerImage(layer) {
-    layer.seq = (layer.seq || 0) + 1;
-    closeBmp(layer.matcap);
-    layer.matcap = null;
-    rebuildCache(layer);
-    layersChanged();
+  layer.seq = (layer.seq || 0) + 1;
+  closeBmp(layer.matcap);
+  layer.matcap = null;
+  rebuildCache(layer);
+  layersChanged();
 }
-
 function renumberLayers() {
-    [...layersContainer.children].forEach((card, i) => {
-        card.querySelector('.layer-title').textContent = `Layer ${i + 1}`;
-    });
+  [...layersContainer.children].forEach((card, i) => {
+    card.querySelector(".layer-title").textContent = `Layer ${i + 1}`;
+  });
 }
-
 function updateAddLayerState() {
-    addLayerBtn.disabled = layers.length >= MAX_LAYERS;
+  addLayerBtn.disabled = layers.length >= MAX_LAYERS;
 }
-
 function createLayerCard(layer) {
-    const card = document.createElement('div');
-    card.className = 'settings-area p-3 border rounded bg-light layer-card';
-    card.innerHTML = `
+  const card = document.createElement("div");
+  card.className = "settings-area p-3 border rounded bg-light layer-card";
+  card.innerHTML = `
         <div class="d-flex justify-content-between align-items-center mb-2">
             <h3 class="layer-title mb-0">Layer</h3>
             <button type="button" class="btn btn-sm btn-outline-danger remove-layer-btn" title="Remove layer">×</button>
@@ -1101,456 +1180,411 @@ function createLayerCard(layer) {
                 <input type="range" class="form-range" min="0" max="1" step="0.01" value="1">
             </div>
         </div>`;
-
-    const matcapSlot = createSlot({
-        caption: 'Matcap',
-        clearable: true,
-        onFile: f => setLayerImage(layer, matcapSlot, f),
-        onClear: () => clearLayerImage(layer)
-    });
-    card.querySelector('.layer-slot-host').appendChild(matcapSlot.el);
-
-    layer.fitPanel = createFitPanel({
-        getBitmap: () => layer.matcap,
-        onChange: draft => {
-            if (!layer.matcap) return;
-            matcapSlot.setPreview(layer.matcap, layer.fitPanel.fit);
-            rebuildCache(layer);
-            triggerRender(draft);
-        }
-    });
-    card.appendChild(layer.fitPanel.el);
-
-    const select = card.querySelector('.blend-select');
-    select.value = layer.blendMode || 'normal';
-    select.addEventListener('change', () => {
-        layer.blendMode = select.value;
-        layersChanged();
-    });
-
-    const opInput = card.querySelector('.layer-sliders input');
-    const opVal = card.querySelector('.layer-sliders .val');
-    opInput.addEventListener('input', () => {
-        const v = parseFloat(opInput.value);
-        opVal.textContent = v.toFixed(2);
-        layer.opacity = v;
-        triggerRender(true);
-    });
-    opInput.addEventListener('change', () => triggerRender(false));
-
-    card.querySelector('.remove-layer-btn').addEventListener('click', () => removeLayer(layer, card));
-    return card;
-}
-
-function addLayer() {
-    if (layers.length >= MAX_LAYERS) return;
-    const layer = {
-        id: nextLayerId++,
-        matcap: null,
-        hasPx: false,
-        blendMode: 'normal',
-        opacity: 1,
-        seq: 0,
-        removed: false
-    };
-    layers.push(layer);
-    layersContainer.appendChild(createLayerCard(layer));
-    renumberLayers();
-    updateAddLayerState();
-}
-
-function removeLayer(layer, card) {
-    const idx = layers.indexOf(layer);
-    if (idx === -1) return;
-    layer.removed = true;
-    closeBmp(layer.matcap);
-    layer.matcap = null;
-    layers.splice(idx, 1);
-    engine.send({ type: 'setLayer', id: layer.id, data: null });
-    card.remove();
-    renumberLayers();
-    updateAddLayerState();
+  const matcapSlot = createSlot({
+    caption: "Matcap",
+    clearable: true,
+    onFile: (f) => setLayerImage(layer, matcapSlot, f),
+    onClear: () => clearLayerImage(layer),
+  });
+  card.querySelector(".layer-slot-host").appendChild(matcapSlot.el);
+  layer.fitPanel = createFitPanel({
+    getBitmap: () => layer.matcap,
+    onChange: (draft) => {
+      if (!layer.matcap) return;
+      matcapSlot.setPreview(layer.matcap, layer.fitPanel.fit);
+      rebuildCache(layer);
+      triggerRender(draft);
+    },
+  });
+  card.appendChild(layer.fitPanel.el);
+  const select = card.querySelector(".blend-select");
+  select.value = layer.blendMode || "normal";
+  select.addEventListener("change", () => {
+    layer.blendMode = select.value;
     layersChanged();
-}
-
-addLayerBtn.addEventListener('click', addLayer);
-
-mainPlaceholder.addEventListener('click', () => baseSlot.open());
-mainPlaceholder.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        baseSlot.open();
-    }
-});
-appMain.addEventListener('dragover', e => {
-    e.preventDefault();
-    mainPlaceholder.classList.add('dragover');
-});
-appMain.addEventListener('dragleave', e => {
-    if (!appMain.contains(e.relatedTarget)) mainPlaceholder.classList.remove('dragover');
-});
-appMain.addEventListener('drop', e => {
-    e.preventDefault();
-    mainPlaceholder.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file) loadBase(file);
-});
-window.addEventListener('dragover', e => e.preventDefault());
-window.addEventListener('drop', e => e.preventDefault());
-
-function setupInteractiveSlider(id, valId, formatFn = v => v) {
-    const input = document.getElementById(id);
-    const valSpan = document.getElementById(valId);
-    if (!input) return;
-
-    input.addEventListener('input', () => {
-        if (valSpan) valSpan.textContent = formatFn(parseFloat(input.value));
-        triggerRender(true);
-    });
-    input.addEventListener('change', () => triggerRender(false));
-}
-
-setupInteractiveSlider('rotX', 'rotXVal', v => Math.round(v));
-setupInteractiveSlider('rotY', 'rotYVal', v => Math.round(v));
-setupInteractiveSlider('rotZ', 'rotZVal', v => Math.round(v));
-
-const rotXEl = document.getElementById('rotX');
-const rotYEl = document.getElementById('rotY');
-if (rotXEl && rotYEl) {
-    const updateBallFromInputs = () => updateHandlePosition(parseFloat(rotXEl.value), parseFloat(rotYEl.value));
-    rotXEl.addEventListener('input', updateBallFromInputs);
-    rotYEl.addEventListener('input', updateBallFromInputs);
-}
-
-setupInteractiveSlider('matcapScale', 'matcapScaleVal', v => v.toFixed(2));
-setupInteractiveSlider('backMatcapScale', 'backMatcapScaleVal', v => v.toFixed(2));
-setupInteractiveSlider('backRimAngle', 'backRimAngleVal', v => Math.round(v));
-setupInteractiveSlider('gradInnerRadius', 'gradInnerRadiusVal', v => Math.round(v));
-setupInteractiveSlider('gradSharpness', 'gradSharpnessVal', v => Math.round(v));
-setupInteractiveSlider('backRadius', 'backRadiusVal', v => v.toFixed(2));
-setupInteractiveSlider('backEdgeSharpness', 'backEdgeSharpnessVal', v => Math.round(v));
-setupInteractiveSlider('globalSoftness', 'globalSoftnessVal', v => Math.round(v));
-setupInteractiveSlider('rimAngle', 'rimAngleVal', v => Math.round(v));
-setupInteractiveSlider('rimBlur', 'rimBlurVal', v => Math.round(v));
-
-function updateHandlePosition(pitchDeg, yawDeg) {
-    if (!ballController || !ballHandle) return;
-    const radius = ballController.clientWidth / 2;
-    const normX = (yawDeg / 180);
-    const normY = (-pitchDeg / 180);
-    ballHandle.style.left = `${radius + normX * (radius - 6)}px`;
-    ballHandle.style.top = `${radius + normY * (radius - 6)}px`;
-}
-
-function handleBallMove(e) {
-    if (!isBallDragging || !ballController) return;
-    const rect = ballController.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    let dx = (e.clientX - cx) / (rect.width / 2);
-    let dy = (e.clientY - cy) / (rect.height / 2);
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist > 1) {
-        dx /= dist;
-        dy /= dist;
-    }
-    const yaw = Math.round(dx * 180);
-    const pitch = Math.round(-dy * 180);
-    rotYInput.value = yaw;
-    rotXInput.value = pitch;
-    document.getElementById('rotYVal').textContent = yaw;
-    document.getElementById('rotXVal').textContent = pitch;
-    updateHandlePosition(pitch, yaw);
+  });
+  const opInput = card.querySelector(".layer-sliders input");
+  const opVal = card.querySelector(".layer-sliders .val");
+  opInput.addEventListener("input", () => {
+    const v = parseFloat(opInput.value);
+    opVal.textContent = v.toFixed(2);
+    layer.opacity = v;
     triggerRender(true);
+  });
+  opInput.addEventListener("change", () => triggerRender(false));
+  card.querySelector(".remove-layer-btn").addEventListener("click", () => removeLayer(layer, card));
+  return card;
 }
-
+function addLayer() {
+  if (layers.length >= MAX_LAYERS) return;
+  const layer = {
+    id: nextLayerId++,
+    matcap: null,
+    hasPx: false,
+    blendMode: "normal",
+    opacity: 1,
+    seq: 0,
+    removed: false,
+  };
+  layers.push(layer);
+  layersContainer.appendChild(createLayerCard(layer));
+  renumberLayers();
+  updateAddLayerState();
+}
+function removeLayer(layer, card) {
+  const idx = layers.indexOf(layer);
+  if (idx === -1) return;
+  layer.removed = true;
+  closeBmp(layer.matcap);
+  layer.matcap = null;
+  layers.splice(idx, 1);
+  engine.send({ type: "setLayer", id: layer.id, data: null });
+  card.remove();
+  renumberLayers();
+  updateAddLayerState();
+  layersChanged();
+}
+addLayerBtn.addEventListener("click", addLayer);
+mainPlaceholder.addEventListener("click", () => baseSlot.open());
+mainPlaceholder.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    baseSlot.open();
+  }
+});
+appMain.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  mainPlaceholder.classList.add("dragover");
+});
+appMain.addEventListener("dragleave", (e) => {
+  if (!appMain.contains(e.relatedTarget)) mainPlaceholder.classList.remove("dragover");
+});
+appMain.addEventListener("drop", (e) => {
+  e.preventDefault();
+  mainPlaceholder.classList.remove("dragover");
+  const file = e.dataTransfer.files[0];
+  if (file) loadBase(file);
+});
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => e.preventDefault());
+function setupInteractiveSlider(id, valId, formatFn = (v) => v) {
+  const input = document.getElementById(id);
+  const valSpan = document.getElementById(valId);
+  if (!input) return;
+  input.addEventListener("input", () => {
+    if (valSpan) valSpan.textContent = formatFn(parseFloat(input.value));
+    triggerRender(true);
+  });
+  input.addEventListener("change", () => triggerRender(false));
+}
+setupInteractiveSlider("rotX", "rotXVal", (v) => Math.round(v));
+setupInteractiveSlider("rotY", "rotYVal", (v) => Math.round(v));
+setupInteractiveSlider("rotZ", "rotZVal", (v) => Math.round(v));
+const rotXEl = document.getElementById("rotX");
+const rotYEl = document.getElementById("rotY");
+if (rotXEl && rotYEl) {
+  const updateBallFromInputs = () => updateHandlePosition(parseFloat(rotXEl.value), parseFloat(rotYEl.value));
+  rotXEl.addEventListener("input", updateBallFromInputs);
+  rotYEl.addEventListener("input", updateBallFromInputs);
+}
+setupInteractiveSlider("matcapScale", "matcapScaleVal", (v) => v.toFixed(2));
+setupInteractiveSlider("backMatcapScale", "backMatcapScaleVal", (v) => v.toFixed(2));
+setupInteractiveSlider("backRimAngle", "backRimAngleVal", (v) => Math.round(v));
+setupInteractiveSlider("gradInnerRadius", "gradInnerRadiusVal", (v) => Math.round(v));
+setupInteractiveSlider("gradSharpness", "gradSharpnessVal", (v) => Math.round(v));
+setupInteractiveSlider("backRadius", "backRadiusVal", (v) => v.toFixed(2));
+setupInteractiveSlider("backEdgeSharpness", "backEdgeSharpnessVal", (v) => Math.round(v));
+setupInteractiveSlider("globalSoftness", "globalSoftnessVal", (v) => Math.round(v));
+setupInteractiveSlider("rimAngle", "rimAngleVal", (v) => Math.round(v));
+setupInteractiveSlider("rimBlur", "rimBlurVal", (v) => Math.round(v));
+function updateHandlePosition(pitchDeg, yawDeg) {
+  if (!ballController || !ballHandle) return;
+  const radius = ballController.clientWidth / 2;
+  const normX = yawDeg / 180;
+  const normY = -pitchDeg / 180;
+  ballHandle.style.left = `${radius + normX * (radius - 6)}px`;
+  ballHandle.style.top = `${radius + normY * (radius - 6)}px`;
+}
+function handleBallMove(e) {
+  if (!isBallDragging || !ballController) return;
+  const rect = ballController.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  let dx = (e.clientX - cx) / (rect.width / 2);
+  let dy = (e.clientY - cy) / (rect.height / 2);
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist > 1) {
+    dx /= dist;
+    dy /= dist;
+  }
+  const yaw = Math.round(dx * 180);
+  const pitch = Math.round(-dy * 180);
+  rotYInput.value = yaw;
+  rotXInput.value = pitch;
+  document.getElementById("rotYVal").textContent = yaw;
+  document.getElementById("rotXVal").textContent = pitch;
+  updateHandlePosition(pitch, yaw);
+  triggerRender(true);
+}
 if (ballController) {
-    ballController.addEventListener('pointerdown', e => {
-        e.preventDefault();
-        isBallDragging = true;
-        try { ballController.setPointerCapture(e.pointerId); } catch (err) {}
-        handleBallMove(e);
-    });
-    ballController.addEventListener('pointermove', handleBallMove);
-    const stopBallDrag = () => {
-        if (isBallDragging) {
-            isBallDragging = false;
-            triggerRender(false);
-        }
-    };
-    ballController.addEventListener('pointerup', stopBallDrag);
-    ballController.addEventListener('pointercancel', stopBallDrag);
+  ballController.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    isBallDragging = true;
+    try {
+      ballController.setPointerCapture(e.pointerId);
+    } catch (err) {}
+    handleBallMove(e);
+  });
+  ballController.addEventListener("pointermove", handleBallMove);
+  const stopBallDrag = () => {
+    if (isBallDragging) {
+      isBallDragging = false;
+      triggerRender(false);
+    }
+  };
+  ballController.addEventListener("pointerup", stopBallDrag);
+  ballController.addEventListener("pointercancel", stopBallDrag);
 }
-
-const resetRotationBtn = document.getElementById('resetRotation');
+const resetRotationBtn = document.getElementById("resetRotation");
 if (resetRotationBtn) {
-    resetRotationBtn.addEventListener('click', () => {
-        rotXInput.value = 0;
-        rotYInput.value = 0;
-        rotZInput.value = 0;
-        document.getElementById('rotXVal').textContent = 0;
-        document.getElementById('rotYVal').textContent = 0;
-        document.getElementById('rotZVal').textContent = 0;
-        updateHandlePosition(0, 0);
-        triggerRender(false);
-    });
+  resetRotationBtn.addEventListener("click", () => {
+    rotXInput.value = 0;
+    rotYInput.value = 0;
+    rotZInput.value = 0;
+    document.getElementById("rotXVal").textContent = 0;
+    document.getElementById("rotYVal").textContent = 0;
+    document.getElementById("rotZVal").textContent = 0;
+    updateHandlePosition(0, 0);
+    triggerRender(false);
+  });
 }
-
 function updateBackFillUI() {
-    const mode = getBackFillMode();
-    const colorArea = document.getElementById('backColorArea');
-    const gradArea = document.getElementById('backGradientArea');
-    const matcapArea = document.getElementById('backMatcapArea');
-
-    if (colorArea) colorArea.style.display = mode === 'color' ? 'block' : 'none';
-    if (gradArea) gradArea.style.display = mode === 'gradient' ? 'block' : 'none';
-    if (matcapArea) matcapArea.style.display = mode === 'matcap' ? 'block' : 'none';
+  const mode = getBackFillMode();
+  const colorArea = document.getElementById("backColorArea");
+  const gradArea = document.getElementById("backGradientArea");
+  const matcapArea = document.getElementById("backMatcapArea");
+  if (colorArea) colorArea.style.display = mode === "color" ? "block" : "none";
+  if (gradArea) gradArea.style.display = mode === "gradient" ? "block" : "none";
+  if (matcapArea) matcapArea.style.display = mode === "matcap" ? "block" : "none";
 }
-
-document.querySelectorAll('input[name="backFill"]').forEach(input => {
-    input.addEventListener('change', () => {
-        updateBackFillUI();
-        triggerRender(false);
-    });
+document.querySelectorAll('input[name="backFill"]').forEach((input) => {
+  input.addEventListener("change", () => {
+    updateBackFillUI();
+    triggerRender(false);
+  });
 });
 updateBackFillUI();
-
-document.querySelectorAll('input[name="faceSize"]').forEach(input => {
-    input.addEventListener('change', () => triggerRender(false));
+document.querySelectorAll('input[name="faceSize"]').forEach((input) => {
+  input.addEventListener("change", () => triggerRender(false));
 });
-
 function getBackFillMode() {
-    const checked = document.querySelector('input[name="backFill"]:checked');
-    return checked ? checked.value : 'blur';
+  const checked = document.querySelector('input[name="backFill"]:checked');
+  return checked ? checked.value : "blur";
 }
-
 const readNum = (id, fallback, div = 1) => {
-    const el = document.getElementById(id);
-    return el ? parseFloat(el.value) / div : fallback;
+  const el = document.getElementById(id);
+  return el ? parseFloat(el.value) / div : fallback;
 };
-const getBackMatcapScale = () => readNum('backMatcapScale', 1.0);
-const getBackRadius = () => readNum('backRadius', 1.0);
-const getBackEdgeSharpness = () => readNum('backEdgeSharpness', 0.25, 100);
-const getGradInnerRadius = () => readNum('gradInnerRadius', 0.5, 100);
-const getGradSharpness = () => readNum('gradSharpness', 0.0, 100);
-const getGlobalSoftness = () => readNum('globalSoftness', 0, 100);
-const getMatcapScale = () => readNum('matcapScale', 1.0);
-
+const getBackMatcapScale = () => readNum("backMatcapScale", 1);
+const getBackRadius = () => readNum("backRadius", 1);
+const getBackEdgeSharpness = () => readNum("backEdgeSharpness", 0.25, 100);
+const getGradInnerRadius = () => readNum("gradInnerRadius", 0.5, 100);
+const getGradSharpness = () => readNum("gradSharpness", 0, 100);
+const getGlobalSoftness = () => readNum("globalSoftness", 0, 100);
+const getMatcapScale = () => readNum("matcapScale", 1);
 function getRotations() {
-    const rx = parseFloat(rotXInput?.value || 0) * Math.PI / 180;
-    const ry = parseFloat(rotYInput?.value || 0) * Math.PI / 180;
-    const rz = parseFloat(rotZInput?.value || 0) * Math.PI / 180;
-    return { rx, ry, rz };
+  const rx = (parseFloat(rotXInput?.value || 0) * Math.PI) / 180;
+  const ry = (parseFloat(rotYInput?.value || 0) * Math.PI) / 180;
+  const rz = (parseFloat(rotZInput?.value || 0) * Math.PI) / 180;
+  return { rx, ry, rz };
 }
-
-// Standard Source cubemap orientation: applied on export only, preview stays unrotated
-const EXPORT_RX = -90 * Math.PI / 180;
-
+const EXPORT_RX = (-90 * Math.PI) / 180;
 function collectParams(forExport) {
-    const { rx, ry, rz } = getRotations();
-    const c = colorState;
-    return {
-        rx, ry, rz,
-        forExport: !!forExport,
-        backMode: getBackFillMode(),
-        softness: getGlobalSoftness(),
-        scale: getMatcapScale(),
-        rimAngle: readNum('rimAngle', 90) * Math.PI / 180,
-        rimBlur: readNum('rimBlur', 50, 100),
-        backRimAngle: readNum('backRimAngle', 90) * Math.PI / 180,
-        backScale: getBackMatcapScale(),
-        backRadius: getBackRadius(),
-        edgeSharp: getBackEdgeSharpness(),
-        gradSharp: getGradSharpness(),
-        gradInner: getGradInnerRadius(),
-        solid: [...c.solid.rgb, c.solid.a],
-        grad1: [...c.grad1.rgb, c.grad1.a],
-        grad2: [...c.grad2.rgb, c.grad2.a],
-        layers: layers
-            .filter(l => l.hasPx && l.opacity > 0)
-            .map(l => ({ id: l.id, opacity: l.opacity, blend: l.blendMode || 'normal' }))
-    };
+  const { rx, ry, rz } = getRotations();
+  const c = colorState;
+  return {
+    rx,
+    ry,
+    rz,
+    forExport: !!forExport,
+    backMode: getBackFillMode(),
+    softness: getGlobalSoftness(),
+    scale: getMatcapScale(),
+    rimAngle: (readNum("rimAngle", 90) * Math.PI) / 180,
+    rimBlur: readNum("rimBlur", 50, 100),
+    backRimAngle: (readNum("backRimAngle", 90) * Math.PI) / 180,
+    backScale: getBackMatcapScale(),
+    backRadius: getBackRadius(),
+    edgeSharp: getBackEdgeSharpness(),
+    gradSharp: getGradSharpness(),
+    gradInner: getGradInnerRadius(),
+    solid: [...c.solid.rgb, c.solid.a],
+    grad1: [...c.grad1.rgb, c.grad1.a],
+    grad2: [...c.grad2.rgb, c.grad2.a],
+    layers: layers
+      .filter((l) => l.hasPx && l.opacity > 0)
+      .map((l) => ({ id: l.id, opacity: l.opacity, blend: l.blendMode || "normal" })),
+  };
 }
-
 function requestRender(size, final) {
-    engine.send({ type: 'render', seq: ++renderSeq, size, final, p: collectParams() });
+  engine.send({ type: "render", seq: ++renderSeq, size, final, p: collectParams() });
 }
-
 function triggerRender(isDraft = false) {
-    if (!baseReady || animBusy) return;
-    clearTimeout(renderTimer);
-    const size = getFaceSize();
-    if (isDraft) {
-        requestRender(Math.min(DRAFT_SIZE, size), false);
-        renderTimer = setTimeout(() => requestRender(size, true), FINAL_DELAY);
-    } else {
-        requestRender(size, true);
-    }
+  if (!baseReady || animBusy) return;
+  clearTimeout(renderTimer);
+  const size = getFaceSize();
+  if (isDraft) {
+    requestRender(Math.min(DRAFT_SIZE, size), false);
+    renderTimer = setTimeout(() => requestRender(size, true), FINAL_DELAY);
+  } else {
+    requestRender(size, true);
+  }
 }
-
 const framePending = new Map();
 let animBusy = false;
-
 function handleEngineMessage(m) {
-    if (m.type === 'error') {
-        console.error('Render error:', m.message);
-        for (const h of framePending.values()) h.reject(new Error(m.message));
-        framePending.clear();
-        return;
-    }
-    if (m.type === 'faces' && framePending.has(m.seq)) {
-        const h = framePending.get(m.seq);
-        framePending.delete(m.seq);
-        h.resolve(m);
-        return;
-    }
-    if (m.type !== 'faces' || m.seq < shownSeq) return;
-    shownSeq = m.seq;
-    if (m.final) {
-        generatedFaces = m.faces;
-        generatedSize = m.size;
-        const sp = getSpherePixels(m.size);
-        if (sp) generatedFaces.sphere = sp;
-    }
-    renderPreview(m.faces, m.size);
+  if (m.type === "error") {
+    console.error("Render error:", m.message);
+    for (const h of framePending.values()) h.reject(new Error(m.message));
+    framePending.clear();
+    return;
+  }
+  if (m.type === "faces" && framePending.has(m.seq)) {
+    const h = framePending.get(m.seq);
+    framePending.delete(m.seq);
+    h.resolve(m);
+    return;
+  }
+  if (m.type !== "faces" || m.seq < shownSeq) return;
+  shownSeq = m.seq;
+  if (m.final) {
+    generatedFaces = m.faces;
+    generatedSize = m.size;
+    const sp = getSpherePixels(m.size);
+    if (sp) generatedFaces.sphere = sp;
+  }
+  renderPreview(m.faces, m.size);
 }
-
 function canvasPngBytes(canvas) {
-    const bin = atob(canvas.toDataURL('image/png').split(',')[1]);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return bytes;
+  const bin = atob(canvas.toDataURL("image/png").split(",")[1]);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }
-
 function renderPreview(faces, size) {
-    const holder = document.getElementById('facesOutput');
-    resultArea.style.display = 'block';
-    const placeholder = document.getElementById('mainPlaceholder');
-    if (placeholder) placeholder.style.display = 'none';
-
-    if (!baseBmp) {
-        const oldMc = holder.querySelector('.face-cell[data-face="matcap"]');
-        if (oldMc) oldMc.remove();
+  const holder = document.getElementById("facesOutput");
+  resultArea.style.display = "block";
+  const placeholder = document.getElementById("mainPlaceholder");
+  if (placeholder) placeholder.style.display = "none";
+  if (!baseBmp) {
+    const oldMc = holder.querySelector('.face-cell[data-face="matcap"]');
+    if (oldMc) oldMc.remove();
+  }
+  if (baseBmp) {
+    let mc = holder.querySelector('.face-cell[data-face="matcap"] canvas');
+    if (!mc) {
+      const cell = document.createElement("div");
+      cell.className = "face-cell";
+      cell.dataset.face = "matcap";
+      mc = document.createElement("canvas");
+      mc.draggable = false;
+      const label = document.createElement("span");
+      label.textContent = "matcap";
+      cell.appendChild(mc);
+      cell.appendChild(label);
+      holder.appendChild(cell);
     }
-
-    if (baseBmp) {
-        let mc = holder.querySelector('.face-cell[data-face="matcap"] canvas');
-        if (!mc) {
-            const cell = document.createElement('div');
-            cell.className = 'face-cell';
-            cell.dataset.face = 'matcap';
-            mc = document.createElement('canvas');
-            mc.draggable = false;
-            const label = document.createElement('span');
-            label.textContent = 'matcap';
-            cell.appendChild(mc);
-            cell.appendChild(label);
-            holder.appendChild(cell);
-        }
-        const f = baseFit.fit;
-        const key = `${size}|${f.cx}|${f.cy}|${f.r}`;
-        if (mc._bmp !== baseBmp || mc._key !== key) {
-            mc.width = mc.height = size;
-            mc.getContext('2d').drawImage(normalizeMatcap(baseBmp, f, size), 0, 0);
-            mc._bmp = baseBmp;
-            mc._key = key;
-        }
+    const f = baseFit.fit;
+    const key = `${size}|${f.cx}|${f.cy}|${f.r}`;
+    if (mc._bmp !== baseBmp || mc._key !== key) {
+      mc.width = mc.height = size;
+      mc.getContext("2d").drawImage(normalizeMatcap(baseBmp, f, size), 0, 0);
+      mc._bmp = baseBmp;
+      mc._key = key;
     }
-
-    for (const face of FACES) {
-        let cell = holder.querySelector(`.face-cell[data-face="${face}"]`);
-        let canvas;
-        if (!cell) {
-            cell = document.createElement('div');
-            cell.className = 'face-cell';
-            cell.dataset.face = face;
-            canvas = document.createElement('canvas');
-            canvas.draggable = false;
-            const label = document.createElement('span');
-            label.textContent = face;
-            cell.appendChild(canvas);
-            cell.appendChild(label);
-            holder.appendChild(cell);
-        } else {
-            canvas = cell.querySelector('canvas');
-        }
-
-        if (canvas.width !== size || canvas.height !== size) {
-            canvas.width = size;
-            canvas.height = size;
-        }
-        canvas.getContext('2d').putImageData(new ImageData(faces[face], size, size), 0, 0);
+  }
+  for (const face of FACES) {
+    let cell = holder.querySelector(`.face-cell[data-face="${face}"]`);
+    let canvas;
+    if (!cell) {
+      cell = document.createElement("div");
+      cell.className = "face-cell";
+      cell.dataset.face = face;
+      canvas = document.createElement("canvas");
+      canvas.draggable = false;
+      const label = document.createElement("span");
+      label.textContent = face;
+      cell.appendChild(canvas);
+      cell.appendChild(label);
+      holder.appendChild(cell);
+    } else {
+      canvas = cell.querySelector("canvas");
     }
-    envSphere.update(faces, size);
-    fitFaceGrid();
+    if (canvas.width !== size || canvas.height !== size) {
+      canvas.width = size;
+      canvas.height = size;
+    }
+    canvas.getContext("2d").putImageData(new ImageData(faces[face], size, size), 0, 0);
+  }
+  envSphere.update(faces, size);
+  fitFaceGrid();
 }
-
-const FACES = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
-
-// ---------------------------------------------------------------------------
-// Mirror-ball preview: shows the generated cubemap as an environment map.
-// Uses the exact same face basis / direction convention as the engine (BASIS),
-// so what you see on the ball is what the faces contain.
-// ---------------------------------------------------------------------------
-// Scales the 4x3 face grid so it fills the free area of the main panel (down to the bottom of the page).
+const FACES = ["px", "nx", "py", "ny", "pz", "nz"];
 function fitFaceGrid() {
-    const holder = document.getElementById('facesOutput');
-    const main = document.getElementById('appMain');
-    if (!holder || !main || resultArea.style.display === 'none') return;
-
-    const cs = getComputedStyle(main);
-    const availW = main.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-    const gap = 8, MAX = 520, MIN = 48;
-    let cell = (availW - gap * 3) / 4;
-
-    if (window.innerWidth > 900) {                        // desktop layout: main panel has a fixed height
-        const availH = main.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-        const btns = resultArea.querySelector('.d-flex');
-        let btnH = 0;
-        if (btns) {
-            const bs = getComputedStyle(btns);
-            btnH = btns.offsetHeight + parseFloat(bs.marginTop) + parseFloat(bs.marginBottom);
-        }
-        const lbl = holder.querySelector('.face-cell span, .env-cell .env-bar');
-        const labelH = (lbl ? lbl.offsetHeight : 18) + 4;
-        const topMargin = parseFloat(getComputedStyle(holder).marginTop) || 0;
-        const cellByH = (availH - btnH - topMargin - gap * 2 - labelH * 3 - 2) / 3;
-        cell = Math.min(cell, cellByH);
+  const holder = document.getElementById("facesOutput");
+  const main = document.getElementById("appMain");
+  if (!holder || !main || resultArea.style.display === "none") return;
+  const cs = getComputedStyle(main);
+  const availW = main.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const gap = 8,
+    MAX = 520,
+    MIN = 48;
+  let cell = (availW - gap * 3) / 4;
+  if (window.innerWidth > 900) {
+    const availH = main.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    const btns = resultArea.querySelector(".d-flex");
+    let btnH = 0;
+    if (btns) {
+      const bs = getComputedStyle(btns);
+      btnH = btns.offsetHeight + parseFloat(bs.marginTop) + parseFloat(bs.marginBottom);
     }
-    cell = Math.max(MIN, Math.min(MAX, Math.floor(cell)));
-    holder.style.setProperty('--cell', cell + 'px');
-
-    // the estimate above can be a few px off, so trim until the panel really stops scrolling
-    if (window.innerWidth > 900) {
-        for (let i = 0; i < 24 && cell > MIN && main.scrollHeight > main.clientHeight; i++) {
-            const over = main.scrollHeight - main.clientHeight;
-            cell = Math.max(MIN, cell - Math.max(1, Math.ceil(over / 3)));
-            holder.style.setProperty('--cell', cell + 'px');
-        }
+    const lbl = holder.querySelector(".face-cell span, .env-cell .env-bar");
+    const labelH = (lbl ? lbl.offsetHeight : 18) + 4;
+    const topMargin = parseFloat(getComputedStyle(holder).marginTop) || 0;
+    const cellByH = (availH - btnH - topMargin - gap * 2 - labelH * 3 - 2) / 3;
+    cell = Math.min(cell, cellByH);
+  }
+  cell = Math.max(MIN, Math.min(MAX, Math.floor(cell)));
+  holder.style.setProperty("--cell", cell + "px");
+  if (window.innerWidth > 900) {
+    for (let i = 0; i < 24 && cell > MIN && main.scrollHeight > main.clientHeight; i++) {
+      const over = main.scrollHeight - main.clientHeight;
+      cell = Math.max(MIN, cell - Math.max(1, Math.ceil(over / 3)));
+      holder.style.setProperty("--cell", cell + "px");
     }
+  }
 }
 (() => {
-    const main = document.getElementById('appMain');
-    if (window.ResizeObserver && main) new ResizeObserver(fitFaceGrid).observe(main);
-    window.addEventListener('resize', fitFaceGrid);
+  const main = document.getElementById("appMain");
+  if (window.ResizeObserver && main) new ResizeObserver(fitFaceGrid).observe(main);
+  window.addEventListener("resize", fitFaceGrid);
 })();
-
 const envSphere = (() => {
-    const noop = { update() {} };
-    const wrap = document.getElementById('envSphereWrap');
-    const cv = document.getElementById('envSphereCanvas');
-    if (!wrap || !cv) return noop;
-
-    const gl = cv.getContext('webgl2', { antialias: true, alpha: false });
-    if (!gl) { wrap.hidden = true; return noop; }
-
-    const VS = `#version 300 es
+  const noop = { update() {} };
+  const wrap = document.getElementById("envSphereWrap");
+  const cv = document.getElementById("envSphereCanvas");
+  if (!wrap || !cv) return noop;
+  const gl = cv.getContext("webgl2", { antialias: true, alpha: false });
+  if (!gl) {
+    wrap.hidden = true;
+    return noop;
+  }
+  const VS = `#version 300 es
     void main() {
         vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
         gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
     }`;
-
-    const FS = `#version 300 es
+  const FS = `#version 300 es
     precision highp float;
     uniform sampler2D t0, t1, t2, t3, t4, t5;
     uniform vec2 uRes;
@@ -1565,12 +1599,10 @@ const envSphere = (() => {
     vec2 faceUV(int i, vec3 d) {
         float dc = dot(d, C[i]);
         vec2 uv = vec2((dot(d, A[i]) / dc + 1.0) * 0.5, (1.0 - dot(d, B[i]) / dc) * 0.5);
-        // engine maps pixel c to u = c / (size - 1): convert to texel-centre coordinates
         return (uv * (uSize - 1.0) + 0.5) / uSize;
     }
 
     vec3 env(vec3 d) {
-        // all six are sampled outside of any branch so mip selection has no seams
         vec3 s0 = texture(t0, faceUV(0, d)).rgb;
         vec3 s1 = texture(t1, faceUV(1, d)).rgb;
         vec3 s2 = texture(t2, faceUV(2, d)).rgb;
@@ -1589,1301 +1621,1454 @@ const envSphere = (() => {
         vec3 ro = -uF * 3.0;
         float b = dot(ro, rd);
         float h = b * b - (dot(ro, ro) - 1.0);
-        // both lookups run for every pixel (uniform control flow keeps mip levels seamless)
         vec3 n = normalize(ro + rd * (-b - sqrt(max(h, 0.0))));
         vec3 eBall = env(reflect(rd, n));
         vec3 eBack = env(rd);
         vec3 col = h > 0.0 ? eBall : (uBg > 0.5 ? eBack : vec3(1.0));
         o = vec4(col, 1.0);
     }`;
-
-    function compile(type, src) {
-        const sh = gl.createShader(type);
-        gl.shaderSource(sh, src);
-        gl.compileShader(sh);
-        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
-        return sh;
-    }
-
-    let prog;
-    try {
-        prog = gl.createProgram();
-        gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
-        gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
-        gl.linkProgram(prog);
-        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-    } catch (err) {
-        console.error('Env sphere disabled:', err);
-        wrap.hidden = true;
-        return noop;
-    }
-    gl.useProgram(prog);
-
-    const tex = [];
-    for (let i = 0; i < 6; i++) {
-        const t = gl.createTexture();
+  function compile(type, src) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+    return sh;
+  }
+  let prog;
+  try {
+    prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  } catch (err) {
+    console.error("Env sphere disabled:", err);
+    wrap.hidden = true;
+    return noop;
+  }
+  gl.useProgram(prog);
+  const tex = [];
+  for (let i = 0; i < 6; i++) {
+    const t = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0 + i);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.uniform1i(gl.getUniformLocation(prog, "t" + i), i);
+    tex.push(t);
+  }
+  const uni = (n) => gl.getUniformLocation(prog, n);
+  const uRes = uni("uRes"),
+    uF = uni("uF"),
+    uR = uni("uR"),
+    uU = uni("uU"),
+    uSize = uni("uSize"),
+    uBg = uni("uBg");
+  const FLIP_X = true;
+  const HOME_YAW = -Math.PI / 2,
+    HOME_PITCH = 0;
+  let yaw = HOME_YAW,
+    pitch = HOME_PITCH;
+  let pending = null,
+    size = 0,
+    raf = 0;
+  function draw() {
+    raf = 0;
+    if (pending) {
+      const { faces, size: sz } = pending;
+      pending = null;
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+      FACES.forEach((f2, i) => {
+        const d = faces[f2];
         gl.activeTexture(gl.TEXTURE0 + i);
-        gl.bindTexture(gl.TEXTURE_2D, t);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.uniform1i(gl.getUniformLocation(prog, 't' + i), i);
-        tex.push(t);
+        gl.bindTexture(gl.TEXTURE_2D, tex[i]);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA8,
+          sz,
+          sz,
+          0,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          new Uint8Array(d.buffer, d.byteOffset, d.byteLength),
+        );
+        gl.generateMipmap(gl.TEXTURE_2D);
+      });
+      size = sz;
     }
-    const uni = n => gl.getUniformLocation(prog, n);
-    const uRes = uni('uRes'), uF = uni('uF'), uR = uni('uR'), uU = uni('uU'), uSize = uni('uSize'), uBg = uni('uBg');
-
-    const FLIP_X = true;   // mirror the ball horizontally (set false for a physically mirrored ball)
-    const HOME_YAW = -Math.PI / 2, HOME_PITCH = 0;   // forward = -X, so the ball centre reflects +X (px)
-    let yaw = HOME_YAW, pitch = HOME_PITCH;
-    let pending = null, size = 0, raf = 0;
-
-    function draw() {
-        raf = 0;
-        if (pending) {
-            const { faces, size: sz } = pending;
-            pending = null;
-            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-            gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-            FACES.forEach((f, i) => {
-                const d = faces[f];
-                gl.activeTexture(gl.TEXTURE0 + i);
-                gl.bindTexture(gl.TEXTURE_2D, tex[i]);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, sz, sz, 0, gl.RGBA, gl.UNSIGNED_BYTE,
-                    new Uint8Array(d.buffer, d.byteOffset, d.byteLength));
-                gl.generateMipmap(gl.TEXTURE_2D);
-            });
-            size = sz;
-        }
-        if (!size) return;
-
-        // left-handed camera, same convention as the cubemap faces (+Z forward, +X right, +Y up)
-        const cp = Math.cos(pitch), sp = Math.sin(pitch), cy = Math.cos(yaw), sy = Math.sin(yaw);
-        const f = [cp * sy, sp, cp * cy];
-        let r = [f[2], 0, -f[0]];                       // cross(up, f)
-        const rl = Math.hypot(r[0], r[2]) || 1;
-        r = [r[0] / rl, 0, r[2] / rl];
-        const u = [f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]]; // cross(f, r)
-
-        gl.viewport(0, 0, cv.width, cv.height);
-        gl.uniform2f(uRes, cv.width, cv.height);
-        gl.uniform3fv(uF, f);
-        gl.uniform3fv(uR, FLIP_X ? [-r[0], -r[1], -r[2]] : r);
-        gl.uniform3fv(uU, u);
-        gl.uniform1f(uSize, size);
-        gl.uniform1f(uBg, 0);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (!size) return;
+    const cp = Math.cos(pitch),
+      sp = Math.sin(pitch),
+      cy = Math.cos(yaw),
+      sy = Math.sin(yaw);
+    const f = [cp * sy, sp, cp * cy];
+    let r = [f[2], 0, -f[0]];
+    const rl = Math.hypot(r[0], r[2]) || 1;
+    r = [r[0] / rl, 0, r[2] / rl];
+    const u = [f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]];
+    gl.viewport(0, 0, cv.width, cv.height);
+    gl.uniform2f(uRes, cv.width, cv.height);
+    gl.uniform3fv(uF, f);
+    gl.uniform3fv(uR, FLIP_X ? [-r[0], -r[1], -r[2]] : r);
+    gl.uniform3fv(uU, u);
+    gl.uniform1f(uSize, size);
+    gl.uniform1f(uBg, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  const schedule = () => {
+    if (!raf) raf = requestAnimationFrame(draw);
+  };
+  let drag = null;
+  cv.addEventListener("pointerdown", (e) => {
+    drag = { x: e.clientX, y: e.clientY };
+    cv.setPointerCapture(e.pointerId);
+    cv.classList.add("dragging");
+  });
+  cv.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    yaw -= (e.clientX - drag.x) * 8e-3 * (FLIP_X ? -1 : 1);
+    pitch = Math.max(-1.5, Math.min(1.5, pitch + (e.clientY - drag.y) * 8e-3));
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    schedule();
+  });
+  const endDrag = () => {
+    drag = null;
+    cv.classList.remove("dragging");
+  };
+  cv.addEventListener("pointerup", endDrag);
+  cv.addEventListener("pointercancel", endDrag);
+  cv.addEventListener("dblclick", () => {
+    yaw = HOME_YAW;
+    pitch = HOME_PITCH;
+    schedule();
+  });
+  const fitCanvas = () => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.round(cv.clientWidth * dpr),
+      h = Math.round(cv.clientHeight * dpr);
+    if (w < 32 || h < 32) return;
+    if (cv.width !== w || cv.height !== h) {
+      cv.width = w;
+      cv.height = h;
+      schedule();
     }
-    const schedule = () => { if (!raf) raf = requestAnimationFrame(draw); };
-
-    let drag = null;
-    cv.addEventListener('pointerdown', e => {
-        drag = { x: e.clientX, y: e.clientY };
-        cv.setPointerCapture(e.pointerId);
-        cv.classList.add('dragging');
-    });
-    cv.addEventListener('pointermove', e => {
-        if (!drag) return;
-        yaw -= (e.clientX - drag.x) * 0.008 * (FLIP_X ? -1 : 1);
-        pitch = Math.max(-1.5, Math.min(1.5, pitch + (e.clientY - drag.y) * 0.008));
-        drag.x = e.clientX; drag.y = e.clientY;
-        schedule();
-    });
-    const endDrag = () => { drag = null; cv.classList.remove('dragging'); };
-    cv.addEventListener('pointerup', endDrag);
-    cv.addEventListener('pointercancel', endDrag);
-    cv.addEventListener('dblclick', () => { yaw = HOME_YAW; pitch = HOME_PITCH; schedule(); });
-
-    // keep the backbuffer matched to the displayed size (grid cell or full page)
-    const fitCanvas = () => {
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
-        if (w < 32 || h < 32) return;
-        if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; schedule(); }
-    };
-    if (window.ResizeObserver) new ResizeObserver(fitCanvas).observe(cv);
-    window.addEventListener('resize', fitCanvas);
-
-    const fsBtn = document.getElementById('envSphereFs');
-    const setFull = on => {
-        wrap.classList.toggle('env-full', on);
-        if (fsBtn) {
-            fsBtn.textContent = on ? '✕ close (Esc)' : 'env sphere';
-            fsBtn.title = on ? 'Close' : 'Open full screen';
-        }
-        fitCanvas();
-        schedule();
-    };
-    if (fsBtn) fsBtn.addEventListener('click', () => setFull(!wrap.classList.contains('env-full')));
-    document.addEventListener('keydown', e => {
-        if (e.key === 'Escape' && wrap.classList.contains('env-full')) setFull(false);
-    });
-
-    return {
-        update(faces, sz) {
-            pending = { faces, size: sz };
-            schedule();
-        }
-    };
+  };
+  if (window.ResizeObserver) new ResizeObserver(fitCanvas).observe(cv);
+  window.addEventListener("resize", fitCanvas);
+  const fsBtn = document.getElementById("envSphereFs");
+  const setFull = (on) => {
+    wrap.classList.toggle("env-full", on);
+    if (fsBtn) {
+      fsBtn.textContent = on ? "✕ close (Esc)" : "env sphere";
+      fsBtn.title = on ? "Close" : "Open full screen";
+    }
+    fitCanvas();
+    schedule();
+  };
+  if (fsBtn) fsBtn.addEventListener("click", () => setFull(!wrap.classList.contains("env-full")));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && wrap.classList.contains("env-full")) setFull(false);
+  });
+  return {
+    update(faces, sz) {
+      pending = { faces, size: sz };
+      schedule();
+    },
+  };
 })();
-
-generateBtn.addEventListener('click', () => triggerRender(false));
-
+generateBtn.addEventListener("click", () => triggerRender(false));
 const VTF_FORMATS = {
-    RGBA8888: 0,
-    BGR888: 3,
-    BGR565: 17,
-    BGRA8888: 12,
-    DXT1: 13,
-    RGBA16161616F: 24,
+  RGBA8888: 0,
+  BGR888: 3,
+  BGR565: 17,
+  BGRA8888: 12,
+  DXT1: 13,
+  RGBA16161616F: 24,
 };
-
 function toHalfFloat(value) {
-    const floatView = new Float32Array(1);
-    const int32View = new Uint32Array(floatView.buffer);
-    floatView[0] = value;
-    const f = int32View[0];
-
-    const sign = (f >> 16) & 0x8000;
-    const exponent = ((f >> 23) & 0xff) - 127 + 15;
-    const mantissa = f & 0x7fffff;
-
-    if (exponent <= 0) {
-        if (exponent < -10) return sign;
-        const m = mantissa | 0x800000;
-        const shift = 14 - exponent;
-        return sign | (m >> shift);
-    } else if (exponent >= 31) {
-        return sign | 0x7c00;
-    }
-    return sign | (exponent << 10) | (mantissa >> 13);
+  const floatView = new Float32Array(1);
+  const int32View = new Uint32Array(floatView.buffer);
+  floatView[0] = value;
+  const f = int32View[0];
+  const sign = (f >> 16) & 32768;
+  const exponent = ((f >> 23) & 255) - 127 + 15;
+  const mantissa = f & 8388607;
+  if (exponent <= 0) {
+    if (exponent < -10) return sign;
+    const m = mantissa | 8388608;
+    const shift = 14 - exponent;
+    return sign | (m >> shift);
+  } else if (exponent >= 31) {
+    return sign | 31744;
+  }
+  return sign | (exponent << 10) | (mantissa >> 13);
 }
-
 function packRGBA16161616F(src) {
-    const px = src.length / 4;
-    const out = new Uint8Array(px * 8);
-    let o = 0;
-    for (let i = 0; i < src.length; i += 4) {
-        for (let ch = 0; ch < 4; ch++) {
-            const h = toHalfFloat(src[i + ch] / 255);
-            out[o] = h & 0xff; out[o + 1] = (h >> 8) & 0xff;
-            o += 2;
-        }
+  const px = src.length / 4;
+  const out = new Uint8Array(px * 8);
+  let o = 0;
+  for (let i = 0; i < src.length; i += 4) {
+    for (let ch = 0; ch < 4; ch++) {
+      const h = toHalfFloat(src[i + ch] / 255);
+      out[o] = h & 255;
+      out[o + 1] = (h >> 8) & 255;
+      o += 2;
     }
-    return out;
+  }
+  return out;
 }
-
 function packBGRA8888(src) {
-    const out = new Uint8Array(src.length);
-    for (let i = 0; i < src.length; i += 4) {
-        out[i] = src[i + 2]; out[i + 1] = src[i + 1]; out[i + 2] = src[i]; out[i + 3] = src[i + 3];
-    }
-    return out;
+  const out = new Uint8Array(src.length);
+  for (let i = 0; i < src.length; i += 4) {
+    out[i] = src[i + 2];
+    out[i + 1] = src[i + 1];
+    out[i + 2] = src[i];
+    out[i + 3] = src[i + 3];
+  }
+  return out;
 }
-
 function packBGR888(src) {
-    const px = src.length / 4;
-    const out = new Uint8Array(px * 3);
-    for (let i = 0, j = 0; i < src.length; i += 4, j += 3) {
-        out[j] = src[i + 2]; out[j + 1] = src[i + 1]; out[j + 2] = src[i];
-    }
-    return out;
+  const px = src.length / 4;
+  const out = new Uint8Array(px * 3);
+  for (let i = 0, j = 0; i < src.length; i += 4, j += 3) {
+    out[j] = src[i + 2];
+    out[j + 1] = src[i + 1];
+    out[j + 2] = src[i];
+  }
+  return out;
 }
-
-// VTF BGR565 = D3DFMT_R5G6B5 as used by Source: little-endian 16-bit word, R in the high 5 bits, B in the low 5.
 function packBGR565(src) {
-    const px = src.length / 4;
-    const out = new Uint8Array(px * 2);
-    for (let i = 0, j = 0; i < src.length; i += 4, j += 2) {
-        const r5 = Math.min(31, Math.round(src[i] * 31 / 255));
-        const g6 = Math.min(63, Math.round(src[i + 1] * 63 / 255));
-        const b5 = Math.min(31, Math.round(src[i + 2] * 31 / 255));
-        const w = (r5 << 11) | (g6 << 5) | b5;
-        out[j] = w & 0xff; out[j + 1] = w >> 8;
-    }
-    return out;
+  const px = src.length / 4;
+  const out = new Uint8Array(px * 2);
+  for (let i = 0, j = 0; i < src.length; i += 4, j += 2) {
+    const r5 = Math.min(31, Math.round((src[i] * 31) / 255));
+    const g6 = Math.min(63, Math.round((src[i + 1] * 63) / 255));
+    const b5 = Math.min(31, Math.round((src[i + 2] * 31) / 255));
+    const w = (r5 << 11) | (g6 << 5) | b5;
+    out[j] = w & 255;
+    out[j + 1] = w >> 8;
+  }
+  return out;
 }
-
 function rgb565(r, g, b) {
-    return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+  return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 }
-
 function unpack565(c) {
-    const r5 = (c >> 11) & 0x1f, g6 = (c >> 5) & 0x3f, b5 = c & 0x1f;
-    return [(r5 << 3) | (r5 >> 2), (g6 << 2) | (g6 >> 4), (b5 << 3) | (b5 >> 2)];
+  const r5 = (c >> 11) & 31,
+    g6 = (c >> 5) & 63,
+    b5 = c & 31;
+  return [(r5 << 3) | (r5 >> 2), (g6 << 2) | (g6 >> 4), (b5 << 3) | (b5 >> 2)];
 }
-
 function encodeDXT1Block(src, size, bx, by) {
-    let minR = 255, minG = 255, minB = 255, maxR = 0, maxG = 0, maxB = 0;
-    const pixels = new Array(16);
-    let p = 0;
-    for (let y = 0; y < 4; y++) {
-        const py = Math.min(by + y, size - 1);
-        for (let x = 0; x < 4; x++) {
-            const px_ = Math.min(bx + x, size - 1);
-            const off = (py * size + px_) * 4;
-            const r = src[off], g = src[off + 1], b = src[off + 2];
-            pixels[p++] = [r, g, b];
-            if (r < minR) minR = r; if (g < minG) minG = g; if (b < minB) minB = b;
-            if (r > maxR) maxR = r; if (g > maxG) maxG = g; if (b > maxB) maxB = b;
-        }
+  let minR = 255,
+    minG = 255,
+    minB = 255,
+    maxR = 0,
+    maxG = 0,
+    maxB = 0;
+  const pixels = new Array(16);
+  let p = 0;
+  for (let y = 0; y < 4; y++) {
+    const py = Math.min(by + y, size - 1);
+    for (let x2 = 0; x2 < 4; x2++) {
+      const px_ = Math.min(bx + x2, size - 1);
+      const off = (py * size + px_) * 4;
+      const r = src[off],
+        g = src[off + 1],
+        b = src[off + 2];
+      pixels[p++] = [r, g, b];
+      if (r < minR) minR = r;
+      if (g < minG) minG = g;
+      if (b < minB) minB = b;
+      if (r > maxR) maxR = r;
+      if (g > maxG) maxG = g;
+      if (b > maxB) maxB = b;
     }
-    let c0 = rgb565(maxR, maxG, maxB);
-    let c1 = rgb565(minR, minG, minB);
-    if (c0 === c1) { if (c0 > 0) c1 = c0 - 1; else c0 = c1 + 1; }
-    if (c0 < c1) { const t = c0; c0 = c1; c1 = t; }
-
-    const [r0, g0, b0] = unpack565(c0);
-    const [r1, g1, b1] = unpack565(c1);
-    const palette = [
-        [r0, g0, b0],
-        [r1, g1, b1],
-        [(2 * r0 + r1) / 3, (2 * g0 + g1) / 3, (2 * b0 + b1) / 3],
-        [(r0 + 2 * r1) / 3, (g0 + 2 * g1) / 3, (b0 + 2 * b1) / 3],
-    ];
-
-    let indices = 0;
-    for (let i = 15; i >= 0; i--) {
-        const [pr, pg, pb] = pixels[i];
-        let best = 0, bestDist = Infinity;
-        for (let k = 0; k < 4; k++) {
-            const [cr, cg, cb] = palette[k];
-            const d = (pr - cr) ** 2 + (pg - cg) ** 2 + (pb - cb) ** 2;
-            if (d < bestDist) { bestDist = d; best = k; }
-        }
-        indices = (indices << 2) | best;
+  }
+  let c0 = rgb565(maxR, maxG, maxB);
+  let c1 = rgb565(minR, minG, minB);
+  if (c0 === c1) {
+    if (c0 > 0) c1 = c0 - 1;
+    else c0 = c1 + 1;
+  }
+  if (c0 < c1) {
+    const t = c0;
+    c0 = c1;
+    c1 = t;
+  }
+  const [r0, g0, b0] = unpack565(c0);
+  const [r1, g1, b1] = unpack565(c1);
+  const palette = [
+    [r0, g0, b0],
+    [r1, g1, b1],
+    [(2 * r0 + r1) / 3, (2 * g0 + g1) / 3, (2 * b0 + b1) / 3],
+    [(r0 + 2 * r1) / 3, (g0 + 2 * g1) / 3, (b0 + 2 * b1) / 3],
+  ];
+  let indices = 0;
+  for (let i = 15; i >= 0; i--) {
+    const [pr, pg, pb] = pixels[i];
+    let best = 0,
+      bestDist = Infinity;
+    for (let k = 0; k < 4; k++) {
+      const [cr, cg, cb] = palette[k];
+      const d = (pr - cr) ** 2 + (pg - cg) ** 2 + (pb - cb) ** 2;
+      if (d < bestDist) {
+        bestDist = d;
+        best = k;
+      }
     }
-    return { c0, c1, indices };
+    indices = (indices << 2) | best;
+  }
+  return { c0, c1, indices };
 }
-
 function packDXT1(src, size) {
-    const blocksPerSide = size / 4;
-    const out = new Uint8Array(blocksPerSide * blocksPerSide * 8);
-    let o = 0;
-    for (let by = 0; by < size; by += 4) {
-        for (let bx = 0; bx < size; bx += 4) {
-            const { c0, c1, indices } = encodeDXT1Block(src, size, bx, by);
-            out[o] = c0 & 0xff; out[o + 1] = (c0 >> 8) & 0xff;
-            out[o + 2] = c1 & 0xff; out[o + 3] = (c1 >> 8) & 0xff;
-            out[o + 4] = indices & 0xff;
-            out[o + 5] = (indices >> 8) & 0xff;
-            out[o + 6] = (indices >> 16) & 0xff;
-            out[o + 7] = (indices >> 24) & 0xff;
-            o += 8;
-        }
+  const blocksPerSide = size / 4;
+  const out = new Uint8Array(blocksPerSide * blocksPerSide * 8);
+  let o = 0;
+  for (let by = 0; by < size; by += 4) {
+    for (let bx = 0; bx < size; bx += 4) {
+      const { c0, c1, indices } = encodeDXT1Block(src, size, bx, by);
+      out[o] = c0 & 255;
+      out[o + 1] = (c0 >> 8) & 255;
+      out[o + 2] = c1 & 255;
+      out[o + 3] = (c1 >> 8) & 255;
+      out[o + 4] = indices & 255;
+      out[o + 5] = (indices >> 8) & 255;
+      out[o + 6] = (indices >> 16) & 255;
+      out[o + 7] = (indices >> 24) & 255;
+      o += 8;
     }
-    return out;
+  }
+  return out;
 }
-
 function packFace(rgba, size, format) {
-    switch (format) {
-        case 'BGRA8888': return packBGRA8888(rgba);
-        case 'BGR888': return packBGR888(rgba);
-        case 'BGR565': return packBGR565(rgba);
-        case 'DXT1': return packDXT1(rgba, size);
-        case 'RGBA16161616F': return packRGBA16161616F(rgba);
-        default: return rgba;
-    }
+  switch (format) {
+    case "BGRA8888":
+      return packBGRA8888(rgba);
+    case "BGR888":
+      return packBGR888(rgba);
+    case "BGR565":
+      return packBGR565(rgba);
+    case "DXT1":
+      return packDXT1(rgba, size);
+    case "RGBA16161616F":
+      return packRGBA16161616F(rgba);
+    default:
+      return rgba;
+  }
 }
-
 function faceByteSize(size, format) {
-    switch (format) {
-        case 'BGRA8888': return size * size * 4;
-        case 'BGR888': return size * size * 3;
-        case 'BGR565': return size * size * 2;
-        case 'DXT1': return (size / 4) * (size / 4) * 8;
-        case 'RGBA16161616F': return size * size * 8;
-        default: return size * size * 4;
-    }
+  switch (format) {
+    case "BGRA8888":
+      return size * size * 4;
+    case "BGR888":
+      return size * size * 3;
+    case "BGR565":
+      return size * size * 2;
+    case "DXT1":
+      return (size / 4) * (size / 4) * 8;
+    case "RGBA16161616F":
+      return size * size * 8;
+    default:
+      return size * size * 4;
+  }
 }
-
 function downsampleFace(src, size) {
-    const half = size / 2;
-    const out = new Uint8ClampedArray(half * half * 4);
-    for (let y = 0; y < half; y++) {
-        const y0 = y * 2, y1 = y0 + 1;
-        for (let x = 0; x < half; x++) {
-            const x0 = x * 2, x1 = x0 + 1;
-            const o00 = (y0 * size + x0) * 4, o10 = (y0 * size + x1) * 4;
-            const o01 = (y1 * size + x0) * 4, o11 = (y1 * size + x1) * 4;
-            const oo = (y * half + x) * 4;
-            for (let ch = 0; ch < 4; ch++) {
-                out[oo + ch] = (src[o00 + ch] + src[o10 + ch] + src[o01 + ch] + src[o11 + ch]) / 4;
-            }
-        }
+  const half = size / 2;
+  const out = new Uint8ClampedArray(half * half * 4);
+  for (let y = 0; y < half; y++) {
+    const y0 = y * 2,
+      y1 = y0 + 1;
+    for (let x2 = 0; x2 < half; x2++) {
+      const x0 = x2 * 2,
+        x1 = x0 + 1;
+      const o00 = (y0 * size + x0) * 4,
+        o10 = (y0 * size + x1) * 4;
+      const o01 = (y1 * size + x0) * 4,
+        o11 = (y1 * size + x1) * 4;
+      const oo = (y * half + x2) * 4;
+      for (let ch = 0; ch < 4; ch++) {
+        out[oo + ch] = (src[o00 + ch] + src[o10 + ch] + src[o01 + ch] + src[o11 + ch]) / 4;
+      }
     }
-    return out;
+  }
+  return out;
 }
-
 function downsampleFaceN(rgba, size, times) {
-    let cur = rgba, curSize = size;
-    for (let i = 0; i < times; i++) {
-        cur = downsampleFace(cur, curSize);
-        curSize /= 2;
-    }
-    return { faces: cur, size: curSize };
+  let cur = rgba,
+    curSize = size;
+  for (let i = 0; i < times; i++) {
+    cur = downsampleFace(cur, curSize);
+    curSize /= 2;
+  }
+  return { faces: cur, size: curSize };
 }
-
 function scaleFacesDown(faces, curSize, targetSize) {
-    if (!faces || targetSize >= curSize) return faces;
-    const times = Math.round(Math.log2(curSize / targetSize));
-    if (times <= 0) return faces;
-    const outFaces = {};
-    for (const face of FACES) {
-        outFaces[face] = downsampleFaceN(faces[face], curSize, times).faces;
-    }
-    if (faces.sphere) {
-        outFaces.sphere = downsampleFaceN(faces.sphere, curSize, times).faces;
-    }
-    return outFaces;
+  if (!faces || targetSize >= curSize) return faces;
+  const times = Math.round(Math.log2(curSize / targetSize));
+  if (times <= 0) return faces;
+  const outFaces = {};
+  for (const face of FACES) {
+    outFaces[face] = downsampleFaceN(faces[face], curSize, times).faces;
+  }
+  if (faces.sphere) {
+    outFaces.sphere = downsampleFaceN(faces.sphere, curSize, times).faces;
+  }
+  return outFaces;
 }
-
 function buildMipChain(faces, size, minSize) {
-    const chain = [{ size, faces }];
-    let curSize = size, curFaces = faces;
-    while (curSize > minSize) {
-        const nextSize = curSize / 2;
-        const nextFaces = {};
-        for (const face of FACES) nextFaces[face] = downsampleFace(curFaces[face], curSize);
-        if (curFaces.sphere) nextFaces.sphere = downsampleFace(curFaces.sphere, curSize);
-        chain.push({ size: nextSize, faces: nextFaces });
-        curSize = nextSize;
-        curFaces = nextFaces;
-    }
-    return chain;
+  const chain = [{ size, faces }];
+  let curSize = size,
+    curFaces = faces;
+  while (curSize > minSize) {
+    const nextSize = curSize / 2;
+    const nextFaces = {};
+    for (const face of FACES) nextFaces[face] = downsampleFace(curFaces[face], curSize);
+    if (curFaces.sphere) nextFaces.sphere = downsampleFace(curFaces.sphere, curSize);
+    chain.push({ size: nextSize, faces: nextFaces });
+    curSize = nextSize;
+    curFaces = nextFaces;
+  }
+  return chain;
 }
-
 function flipFaceRows(rawRgba, size) {
-    const rowBytes = size * 4;
-    const flipped = new Uint8ClampedArray(rawRgba.length);
-    for (let row = 0; row < size; row++) {
-        flipped.set(rawRgba.subarray(row * rowBytes, (row + 1) * rowBytes), (size - 1 - row) * rowBytes);
-    }
-    return flipped;
+  const rowBytes = size * 4;
+  const flipped = new Uint8ClampedArray(rawRgba.length);
+  for (let row = 0; row < size; row++) {
+    flipped.set(rawRgba.subarray(row * rowBytes, (row + 1) * rowBytes), (size - 1 - row) * rowBytes);
+  }
+  return flipped;
 }
-
 function buildVTFGeneric(faces, size, flipRows, format, minSize) {
-    const mipChain = buildMipChain(faces, size, minSize);
-    const mipCount = mipChain.length;
-
-    const headerSize = 64;
-    let bodySize = 0;
-    for (const level of mipChain) bodySize += faceByteSize(level.size, format) * 7;
-    const totalSize = headerSize + bodySize;
-    const buf = new ArrayBuffer(totalSize);
-    const dv = new DataView(buf);
-    let o = 0;
-    const wU8 = v => { dv.setUint8(o, v); o += 1; };
-    const wU16 = v => { dv.setUint16(o, v, true); o += 2; };
-    const wU32 = v => { dv.setUint32(o, v, true); o += 4; };
-    const wF32 = v => { dv.setFloat32(o, v, true); o += 4; };
-
-    wU8(0x56); wU8(0x54); wU8(0x46); wU8(0x00);
-    wU32(7); wU32(1);
-    wU32(headerSize);
-    wU16(size); wU16(size);
-    const ENVMAP = 0x00004000, NOLOD = 0x00000200;
-    wU32(ENVMAP | NOLOD);
-    wU16(1); wU16(0);
-    wU32(0);
-    wF32(0.5); wF32(0.5); wF32(0.5);
-    wU32(0);
-    wF32(1.0);
-    wU32(VTF_FORMATS[format]);
-    wU8(mipCount);
-    dv.setInt32(o, -1, true); o += 4;
-    wU8(0); wU8(0);
-    wU8(0);
-
-    const writeFace = (rawRgba, faceSize) => {
-        const src = flipRows ? flipFaceRows(rawRgba, faceSize) : rawRgba;
-        const packed = packFace(src, faceSize, format);
-        const faceBytes = faceByteSize(faceSize, format);
-        new Uint8Array(buf, o, faceBytes).set(packed);
-        o += faceBytes;
-    };
-
-    for (let i = mipChain.length - 1; i >= 0; i--) {
-        const level = mipChain[i];
-        for (const face of FACES) writeFace(level.faces[face], level.size);
-        writeFace(level.faces.sphere || level.faces[FACES[0]], level.size);
-    }
-
-    return new Uint8Array(buf);
+  const mipChain = buildMipChain(faces, size, minSize);
+  const mipCount = mipChain.length;
+  const headerSize = 64;
+  let bodySize = 0;
+  for (const level of mipChain) bodySize += faceByteSize(level.size, format) * 7;
+  const totalSize = headerSize + bodySize;
+  const buf = new ArrayBuffer(totalSize);
+  const dv = new DataView(buf);
+  let o = 0;
+  const wU8 = (v) => {
+    dv.setUint8(o, v);
+    o += 1;
+  };
+  const wU16 = (v) => {
+    dv.setUint16(o, v, true);
+    o += 2;
+  };
+  const wU32 = (v) => {
+    dv.setUint32(o, v, true);
+    o += 4;
+  };
+  const wF32 = (v) => {
+    dv.setFloat32(o, v, true);
+    o += 4;
+  };
+  wU8(86);
+  wU8(84);
+  wU8(70);
+  wU8(0);
+  wU32(7);
+  wU32(1);
+  wU32(headerSize);
+  wU16(size);
+  wU16(size);
+  const ENVMAP = 16384,
+    NOLOD = 512;
+  wU32(ENVMAP | NOLOD);
+  wU16(1);
+  wU16(0);
+  wU32(0);
+  wF32(0.5);
+  wF32(0.5);
+  wF32(0.5);
+  wU32(0);
+  wF32(1);
+  wU32(VTF_FORMATS[format]);
+  wU8(mipCount);
+  dv.setInt32(o, -1, true);
+  o += 4;
+  wU8(0);
+  wU8(0);
+  wU8(0);
+  const writeFace = (rawRgba, faceSize) => {
+    const src = flipRows ? flipFaceRows(rawRgba, faceSize) : rawRgba;
+    const packed = packFace(src, faceSize, format);
+    const faceBytes = faceByteSize(faceSize, format);
+    new Uint8Array(buf, o, faceBytes).set(packed);
+    o += faceBytes;
+  };
+  for (let i = mipChain.length - 1; i >= 0; i--) {
+    const level = mipChain[i];
+    for (const face of FACES) writeFace(level.faces[face], level.size);
+    writeFace(level.faces.sphere || level.faces[FACES[0]], level.size);
+  }
+  return new Uint8Array(buf);
 }
-
 function buildVTF(faces, size, flipRows, format) {
-    const minSize = format === 'DXT1' ? 4 : 1;
-    return buildVTFGeneric(faces, size, flipRows, format, minSize);
+  const minSize = format === "DXT1" ? 4 : 1;
+  return buildVTFGeneric(faces, size, flipRows, format, minSize);
 }
-
 function buildVTFHDR(faces, size, flipRows) {
-    return buildVTFGeneric(faces, size, flipRows, 'RGBA16161616F', 1);
+  return buildVTFGeneric(faces, size, flipRows, "RGBA16161616F", 1);
 }
-
 function getMatPath() {
-    const matInput = document.getElementById('matPath');
-    return matInput ? matInput.value.trim() : 'material';
+  const matInput = document.getElementById("matPath");
+  return matInput ? matInput.value.trim() : "material";
 }
-
 function getFaceSize() {
-    const checked = document.querySelector('input[name="faceSize"]:checked');
-    return checked ? parseInt(checked.value, 10) : 512;
+  const checked = document.querySelector('input[name="faceSize"]:checked');
+  return checked ? parseInt(checked.value, 10) : 512;
 }
-
 function getHdrFaceSize() {
-    const checked = document.querySelector('input[name="hdrFaceSize"]:checked');
-    return checked ? parseInt(checked.value, 10) : 256;
+  const checked = document.querySelector('input[name="hdrFaceSize"]:checked');
+  return checked ? parseInt(checked.value, 10) : 256;
 }
-
 function getPixelFormat() {
-    const checked = document.querySelector('input[name="pixelFormat"]:checked');
-    return checked ? checked.value : 'DXT1';
+  const checked = document.querySelector('input[name="pixelFormat"]:checked');
+  return checked ? checked.value : "DXT1";
 }
-
-// Approximate .vtf size (header + full mip chain, 6 faces + sphere slot per level) shown on the size buttons.
 function estimateVtfBytes(size, format) {
-    const minSize = format === 'DXT1' ? 4 : 1;
-    let total = 64;
-    for (let s = size; s >= minSize; s = Math.floor(s / 2)) {
-        total += faceByteSize(s, format) * 7;
-        if (s === minSize) break;
-    }
-    return total;
+  const minSize = format === "DXT1" ? 4 : 1;
+  let total = 64;
+  for (let s = size; s >= minSize; s = Math.floor(s / 2)) {
+    total += faceByteSize(s, format) * 7;
+    if (s === minSize) break;
+  }
+  return total;
 }
-
 function formatBytes(b) {
-    if (b < 10240) return (b / 1024).toFixed(1) + ' KB';
-    if (b < 1048576) return Math.round(b / 1024) + ' KB';
-    const mb = b / 1048576;
-    return (mb < 10 ? mb.toFixed(1) : Math.round(mb)) + ' MB';
+  if (b < 10240) return (b / 1024).toFixed(1) + " KB";
+  if (b < 1048576) return Math.round(b / 1024) + " KB";
+  const mb = b / 1048576;
+  return (mb < 10 ? mb.toFixed(1) : Math.round(mb)) + " MB";
 }
-
 function refreshSizeHints() {
-    const fmt = getPixelFormat();
-    document.querySelectorAll('input[name="faceSize"], input[name="hdrFaceSize"]').forEach(inp => {
-        const hint = document.querySelector(`label[for="${inp.id}"] .size-hint`);
-        if (!hint) return;
-        const f = inp.name === 'hdrFaceSize' ? 'RGBA16161616F' : fmt;
-        hint.textContent = '~' + formatBytes(estimateVtfBytes(parseInt(inp.value, 10), f));
-    });
+  const fmt = getPixelFormat();
+  document.querySelectorAll('input[name="faceSize"], input[name="hdrFaceSize"]').forEach((inp) => {
+    const hint = document.querySelector(`label[for="${inp.id}"] .size-hint`);
+    if (!hint) return;
+    const f = inp.name === "hdrFaceSize" ? "RGBA16161616F" : fmt;
+    hint.textContent = "~" + formatBytes(estimateVtfBytes(parseInt(inp.value, 10), f));
+  });
 }
-document.querySelectorAll('input[name="pixelFormat"]').forEach(el => el.addEventListener('change', refreshSizeHints));
+document
+  .querySelectorAll('input[name="pixelFormat"]')
+  .forEach((el) => el.addEventListener("change", refreshSizeHints));
 refreshSizeHints();
-
 function getFlipRows() {
-    const checked = document.querySelector('input[name="flipRows"]:checked');
-    return checked ? checked.value === 'true' : false;
+  const checked = document.querySelector('input[name="flipRows"]:checked');
+  return checked ? checked.value === "true" : false;
 }
-
 const VTF_FMT_NAMES = {
-    0: 'RGBA8888', 1: 'ABGR8888', 2: 'RGB888', 3: 'BGR888', 4: 'RGB565', 5: 'I8', 6: 'IA88',
-    11: 'ARGB8888', 12: 'BGRA8888', 13: 'DXT1', 14: 'DXT3', 15: 'DXT5', 16: 'BGRX8888',
-    17: 'BGR565', 20: 'DXT1', 24: 'RGBA16161616F', 25: 'RGBA16161616'
+  0: "RGBA8888",
+  1: "ABGR8888",
+  2: "RGB888",
+  3: "BGR888",
+  4: "RGB565",
+  5: "I8",
+  6: "IA88",
+  11: "ARGB8888",
+  12: "BGRA8888",
+  13: "DXT1",
+  14: "DXT3",
+  15: "DXT5",
+  16: "BGRX8888",
+  17: "BGR565",
+  20: "DXT1",
+  24: "RGBA16161616F",
+  25: "RGBA16161616",
 };
 const VTF_BPP = {
-    0: 4, 1: 4, 2: 3, 3: 3, 4: 2, 5: 1, 6: 2, 8: 1, 11: 4, 12: 4, 16: 4, 17: 2,
-    18: 2, 19: 2, 21: 2, 22: 2, 23: 4, 24: 8, 25: 8, 26: 4
+  0: 4,
+  1: 4,
+  2: 3,
+  3: 3,
+  4: 2,
+  5: 1,
+  6: 2,
+  8: 1,
+  11: 4,
+  12: 4,
+  16: 4,
+  17: 2,
+  18: 2,
+  19: 2,
+  21: 2,
+  22: 2,
+  23: 4,
+  24: 8,
+  25: 8,
+  26: 4,
 };
-
-function isVtfFile(f) { return !!f && /\.vtf$/i.test(f.name); }
-
+function isVtfFile(f) {
+  return !!f && /\.vtf$/i.test(f.name);
+}
 function halfToFloat(h) {
-    const s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 0x1f, m = h & 0x3ff;
-    if (e === 0) return s * Math.pow(2, -14) * (m / 1024);
-    if (e === 31) return m ? NaN : s * Infinity;
-    return s * Math.pow(2, e - 15) * (1 + m / 1024);
+  const s = h & 32768 ? -1 : 1,
+    e = (h >> 10) & 31,
+    m = h & 1023;
+  if (e === 0) return s * Math.pow(2, -14) * (m / 1024);
+  if (e === 31) return m ? NaN : s * Infinity;
+  return s * Math.pow(2, e - 15) * (1 + m / 1024);
 }
-
 function vtfMipSize(w, h, fmt) {
-    w = Math.max(1, w); h = Math.max(1, h);
-    if (fmt === 13 || fmt === 20) return ((w + 3) >> 2) * ((h + 3) >> 2) * 8;
-    if (fmt === 14 || fmt === 15) return ((w + 3) >> 2) * ((h + 3) >> 2) * 16;
-    const b = VTF_BPP[fmt];
-    if (!b) throw new Error('Unsupported VTF pixel format (' + fmt + ')');
-    return w * h * b;
+  w = Math.max(1, w);
+  h = Math.max(1, h);
+  if (fmt === 13 || fmt === 20) return ((w + 3) >> 2) * ((h + 3) >> 2) * 8;
+  if (fmt === 14 || fmt === 15) return ((w + 3) >> 2) * ((h + 3) >> 2) * 16;
+  const b = VTF_BPP[fmt];
+  if (!b) throw new Error("Unsupported VTF pixel format (" + fmt + ")");
+  return w * h * b;
 }
-
 function decodeVTFImage(dv, off, w, h, fmt) {
-    const out = new Uint8ClampedArray(w * h * 4);
-
-    if (fmt === 13 || fmt === 20 || fmt === 14 || fmt === 15) {
-        const bb = (fmt === 14 || fmt === 15) ? 16 : 8;
-        const bw = (w + 3) >> 2, bh = (h + 3) >> 2;
-        const pal = [null, null, null, null];
-        for (let by = 0; by < bh; by++) {
-            for (let bx = 0; bx < bw; bx++) {
-                const co = off + (by * bw + bx) * bb + (bb === 16 ? 8 : 0);
-                const c0 = dv.getUint16(co, true), c1 = dv.getUint16(co + 2, true);
-                const p0 = unpack565(c0), p1 = unpack565(c1);
-                pal[0] = p0; pal[1] = p1;
-                if (bb === 16 || c0 > c1) {
-                    pal[2] = p0.map((v, i) => (2 * v + p1[i]) / 3);
-                    pal[3] = p0.map((v, i) => (v + 2 * p1[i]) / 3);
-                } else {
-                    pal[2] = p0.map((v, i) => (v + p1[i]) / 2);
-                    pal[3] = [0, 0, 0];
-                }
-                const bits = dv.getUint32(co + 4, true);
-                for (let k = 0; k < 16; k++) {
-                    const x = bx * 4 + (k & 3), y = by * 4 + (k >> 2);
-                    if (x >= w || y >= h) continue;
-                    const c = pal[(bits >>> (2 * k)) & 3];
-                    const o = (y * w + x) * 4;
-                    out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2]; out[o + 3] = 255;
-                }
-            }
+  const out = new Uint8ClampedArray(w * h * 4);
+  if (fmt === 13 || fmt === 20 || fmt === 14 || fmt === 15) {
+    const bb = fmt === 14 || fmt === 15 ? 16 : 8;
+    const bw = (w + 3) >> 2,
+      bh = (h + 3) >> 2;
+    const pal = [null, null, null, null];
+    for (let by = 0; by < bh; by++) {
+      for (let bx = 0; bx < bw; bx++) {
+        const co = off + (by * bw + bx) * bb + (bb === 16 ? 8 : 0);
+        const c0 = dv.getUint16(co, true),
+          c1 = dv.getUint16(co + 2, true);
+        const p0 = unpack565(c0),
+          p1 = unpack565(c1);
+        pal[0] = p0;
+        pal[1] = p1;
+        if (bb === 16 || c0 > c1) {
+          pal[2] = p0.map((v, i) => (2 * v + p1[i]) / 3);
+          pal[3] = p0.map((v, i) => (v + 2 * p1[i]) / 3);
+        } else {
+          pal[2] = p0.map((v, i) => (v + p1[i]) / 2);
+          pal[3] = [0, 0, 0];
         }
-        return out;
-    }
-
-    const n = w * h;
-    const f01 = v => (v > 0 ? (v < 1 ? v * 255 : 255) : 0);
-    for (let i = 0, o = 0; i < n; i++, o += 4) {
-        let r, g, b;
-        switch (fmt) {
-            case 0:  r = dv.getUint8(off); g = dv.getUint8(off + 1); b = dv.getUint8(off + 2); off += 4; break;
-            case 1:  b = dv.getUint8(off + 1); g = dv.getUint8(off + 2); r = dv.getUint8(off + 3); off += 4; break;
-            case 2:  r = dv.getUint8(off); g = dv.getUint8(off + 1); b = dv.getUint8(off + 2); off += 3; break;
-            case 3:  b = dv.getUint8(off); g = dv.getUint8(off + 1); r = dv.getUint8(off + 2); off += 3; break;
-            case 4:  { const c = unpack565(dv.getUint16(off, true)); r = c[2]; g = c[1]; b = c[0]; off += 2; break; }
-            case 17: { const c = unpack565(dv.getUint16(off, true)); r = c[0]; g = c[1]; b = c[2]; off += 2; break; }
-            case 5:  r = g = b = dv.getUint8(off); off += 1; break;
-            case 6:  r = g = b = dv.getUint8(off); off += 2; break;
-            case 11: r = dv.getUint8(off + 1); g = dv.getUint8(off + 2); b = dv.getUint8(off + 3); off += 4; break;
-            case 12:
-            case 16: b = dv.getUint8(off); g = dv.getUint8(off + 1); r = dv.getUint8(off + 2); off += 4; break;
-            case 24:
-                r = f01(halfToFloat(dv.getUint16(off, true)));
-                g = f01(halfToFloat(dv.getUint16(off + 2, true)));
-                b = f01(halfToFloat(dv.getUint16(off + 4, true)));
-                off += 8; break;
-            case 25:
-                r = dv.getUint16(off, true) >> 8; g = dv.getUint16(off + 2, true) >> 8; b = dv.getUint16(off + 4, true) >> 8;
-                off += 8; break;
-            default: throw new Error('Unsupported VTF pixel format (' + fmt + ')');
+        const bits = dv.getUint32(co + 4, true);
+        for (let k = 0; k < 16; k++) {
+          const x2 = bx * 4 + (k & 3),
+            y = by * 4 + (k >> 2);
+          if (x2 >= w || y >= h) continue;
+          const c = pal[(bits >>> (2 * k)) & 3];
+          const o = (y * w + x2) * 4;
+          out[o] = c[0];
+          out[o + 1] = c[1];
+          out[o + 2] = c[2];
+          out[o + 3] = 255;
         }
-        out[o] = r; out[o + 1] = g; out[o + 2] = b; out[o + 3] = 255;
+      }
     }
     return out;
+  }
+  const n = w * h;
+  const f01 = (v) => (v > 0 ? (v < 1 ? v * 255 : 255) : 0);
+  for (let i = 0, o = 0; i < n; i++, o += 4) {
+    let r, g, b;
+    switch (fmt) {
+      case 0:
+        r = dv.getUint8(off);
+        g = dv.getUint8(off + 1);
+        b = dv.getUint8(off + 2);
+        off += 4;
+        break;
+      case 1:
+        b = dv.getUint8(off + 1);
+        g = dv.getUint8(off + 2);
+        r = dv.getUint8(off + 3);
+        off += 4;
+        break;
+      case 2:
+        r = dv.getUint8(off);
+        g = dv.getUint8(off + 1);
+        b = dv.getUint8(off + 2);
+        off += 3;
+        break;
+      case 3:
+        b = dv.getUint8(off);
+        g = dv.getUint8(off + 1);
+        r = dv.getUint8(off + 2);
+        off += 3;
+        break;
+      case 4: {
+        const c = unpack565(dv.getUint16(off, true));
+        r = c[2];
+        g = c[1];
+        b = c[0];
+        off += 2;
+        break;
+      }
+      case 17: {
+        const c = unpack565(dv.getUint16(off, true));
+        r = c[0];
+        g = c[1];
+        b = c[2];
+        off += 2;
+        break;
+      }
+      case 5:
+        r = g = b = dv.getUint8(off);
+        off += 1;
+        break;
+      case 6:
+        r = g = b = dv.getUint8(off);
+        off += 2;
+        break;
+      case 11:
+        r = dv.getUint8(off + 1);
+        g = dv.getUint8(off + 2);
+        b = dv.getUint8(off + 3);
+        off += 4;
+        break;
+      case 12:
+      case 16:
+        b = dv.getUint8(off);
+        g = dv.getUint8(off + 1);
+        r = dv.getUint8(off + 2);
+        off += 4;
+        break;
+      case 24:
+        r = f01(halfToFloat(dv.getUint16(off, true)));
+        g = f01(halfToFloat(dv.getUint16(off + 2, true)));
+        b = f01(halfToFloat(dv.getUint16(off + 4, true)));
+        off += 8;
+        break;
+      case 25:
+        r = dv.getUint16(off, true) >> 8;
+        g = dv.getUint16(off + 2, true) >> 8;
+        b = dv.getUint16(off + 4, true) >> 8;
+        off += 8;
+        break;
+      default:
+        throw new Error("Unsupported VTF pixel format (" + fmt + ")");
+    }
+    out[o] = r;
+    out[o + 1] = g;
+    out[o + 2] = b;
+    out[o + 3] = 255;
+  }
+  return out;
 }
-
 function parseVTFCubemap(buf) {
-    if (buf.byteLength < 64) throw new Error('File is too small');
-    const dv = new DataView(buf);
-    if (dv.getUint32(0, true) !== 0x00465456) throw new Error('Not a VTF file');
-    const major = dv.getUint32(4, true), minor = dv.getUint32(8, true);
-    if (major !== 7) throw new Error('Unsupported VTF version ' + major + '.' + minor);
-
-    const headerSize = dv.getUint32(12, true);
-    const w = dv.getUint16(16, true), h = dv.getUint16(18, true);
-    const flags = dv.getUint32(20, true);
-    const frames = Math.max(1, dv.getUint16(24, true));
-    const firstFrame = dv.getUint16(26, true);
-    const fmt = dv.getInt32(52, true);
-    const mips = Math.max(1, dv.getUint8(56));
-    const lowFmt = dv.getInt32(57, true);
-    const lowW = dv.getUint8(61), lowH = dv.getUint8(62);
-
-    if (!(flags & 0x4000)) throw new Error('This VTF is not a cubemap (no ENVMAP flag)');
-    if (w !== h || !w) throw new Error('Cubemap faces must be square');
-
-    const faceCount = (minor >= 5 || firstFrame === 0xffff) ? 6 : 7;
-
-    let dataOff = headerSize, viaRes = false;
-    if (minor >= 3 && buf.byteLength >= 80) {
-        const nres = dv.getUint32(68, true);
-        for (let i = 0; i < nres; i++) {
-            const eo = 80 + i * 8;
-            if (eo + 8 > buf.byteLength) break;
-            if (dv.getUint8(eo) === 0x30 && dv.getUint8(eo + 1) === 0 && dv.getUint8(eo + 2) === 0) {
-                dataOff = dv.getUint32(eo + 4, true);
-                viaRes = true;
-                break;
-            }
-        }
+  if (buf.byteLength < 64) throw new Error("File is too small");
+  const dv = new DataView(buf);
+  if (dv.getUint32(0, true) !== 4609110) throw new Error("Not a VTF file");
+  const major = dv.getUint32(4, true),
+    minor = dv.getUint32(8, true);
+  if (major !== 7) throw new Error("Unsupported VTF version " + major + "." + minor);
+  const headerSize = dv.getUint32(12, true);
+  const w = dv.getUint16(16, true),
+    h = dv.getUint16(18, true);
+  const flags = dv.getUint32(20, true);
+  const frames = Math.max(1, dv.getUint16(24, true));
+  const firstFrame = dv.getUint16(26, true);
+  const fmt = dv.getInt32(52, true);
+  const mips = Math.max(1, dv.getUint8(56));
+  const lowFmt = dv.getInt32(57, true);
+  const lowW = dv.getUint8(61),
+    lowH = dv.getUint8(62);
+  if (!(flags & 16384)) throw new Error("This VTF is not a cubemap (no ENVMAP flag)");
+  if (w !== h || !w) throw new Error("Cubemap faces must be square");
+  const faceCount = minor >= 5 || firstFrame === 65535 ? 6 : 7;
+  let dataOff = headerSize,
+    viaRes = false;
+  if (minor >= 3 && buf.byteLength >= 80) {
+    const nres = dv.getUint32(68, true);
+    for (let i = 0; i < nres; i++) {
+      const eo = 80 + i * 8;
+      if (eo + 8 > buf.byteLength) break;
+      if (dv.getUint8(eo) === 48 && dv.getUint8(eo + 1) === 0 && dv.getUint8(eo + 2) === 0) {
+        dataOff = dv.getUint32(eo + 4, true);
+        viaRes = true;
+        break;
+      }
     }
-    if (!viaRes && lowFmt >= 0 && lowW && lowH) dataOff += vtfMipSize(lowW, lowH, lowFmt);
-
-    let off = dataOff;
-    for (let m = mips - 1; m >= 1; m--) {
-        off += vtfMipSize(Math.max(1, w >> m), Math.max(1, h >> m), fmt) * frames * faceCount;
-    }
-    const faceBytes = vtfMipSize(w, h, fmt);
-    if (off + faceBytes * faceCount > buf.byteLength) throw new Error('VTF data is truncated');
-
-    const faces = {};
-    FACES.forEach((f, i) => { faces[f] = decodeVTFImage(dv, off + i * faceBytes, w, h, fmt); });
-    return { size: w, frames, fmt, hdr: fmt === 24 || fmt === 25, faces };
+  }
+  if (!viaRes && lowFmt >= 0 && lowW && lowH) dataOff += vtfMipSize(lowW, lowH, lowFmt);
+  let off = dataOff;
+  for (let m = mips - 1; m >= 1; m--) {
+    off += vtfMipSize(Math.max(1, w >> m), Math.max(1, h >> m), fmt) * frames * faceCount;
+  }
+  const faceBytes = vtfMipSize(w, h, fmt);
+  if (off + faceBytes * faceCount > buf.byteLength) throw new Error("VTF data is truncated");
+  const faces = {};
+  FACES.forEach((f, i) => {
+    faces[f] = decodeVTFImage(dv, off + i * faceBytes, w, h, fmt);
+  });
+  return { size: w, frames, fmt, hdr: fmt === 24 || fmt === 25, faces };
 }
-
 const envOffEls = [
-    document.querySelector('.section-title'),
-    layersContainer,
-    addLayerBtn,
-    document.querySelector('input[name="backFill"]').closest('fieldset'),
-    document.getElementById('backColorArea'),
-    document.getElementById('backGradientArea'),
-    document.getElementById('backMatcapArea'),
-    document.getElementById('backBoundaryControls'),
-    document.getElementById('matcapScale').closest('.settings-area'),
-    document.getElementById('rimAngle').closest('.settings-area')
+  document.querySelector(".section-title"),
+  layersContainer,
+  addLayerBtn,
+  document.querySelector('input[name="backFill"]').closest("fieldset"),
+  document.getElementById("backColorArea"),
+  document.getElementById("backGradientArea"),
+  document.getElementById("backMatcapArea"),
+  document.getElementById("backBoundaryControls"),
+  document.getElementById("matcapScale").closest(".settings-area"),
+  document.getElementById("rimAngle").closest(".settings-area"),
 ].filter(Boolean);
-
 function setEnvUI(on) {
-    envOffEls.forEach(el => el.classList.toggle('env-off', on));
-    const fitHost = document.getElementById('baseFitHost');
-    if (fitHost) fitHost.hidden = on;
+  envOffEls.forEach((el) => el.classList.toggle("env-off", on));
+  const fitHost = document.getElementById("baseFitHost");
+  if (fitHost) fitHost.hidden = on;
 }
-
 function clearBase() {
-    if (animBusy) return;
-    baseSeq++;
-    clearTimeout(renderTimer);
-    shownSeq = ++renderSeq;
-
-    if (envState) clearEnv(); else setEnvUI(false);
-    closeBmp(baseBmp);
-    baseBmp = null;
-    baseReady = false;
-    generatedFaces = null;
-    generatedSize = 0;
-    sourceVer++;
-
-    baseSlot.clear();
-    baseInfo.hidden = true;
-    baseName.textContent = '';
-    baseDims.textContent = '';
-
-    document.querySelectorAll('#facesOutput .face-cell').forEach(c => c.remove());
-    resultArea.style.display = 'none';
-    mainPlaceholder.style.display = '';
-
-    generateBtn.disabled = true;
-    ['dlAnimPack', 'dlAnimHdr'].forEach(id => {
-        const b = document.getElementById(id);
-        if (b) b.disabled = true;
-    });
+  if (animBusy) return;
+  baseSeq++;
+  clearTimeout(renderTimer);
+  shownSeq = ++renderSeq;
+  if (envState) clearEnv();
+  else setEnvUI(false);
+  closeBmp(baseBmp);
+  baseBmp = null;
+  baseReady = false;
+  generatedFaces = null;
+  generatedSize = 0;
+  sourceVer++;
+  baseSlot.clear();
+  baseInfo.hidden = true;
+  baseName.textContent = "";
+  baseDims.textContent = "";
+  document.querySelectorAll("#facesOutput .face-cell").forEach((c) => c.remove());
+  resultArea.style.display = "none";
+  mainPlaceholder.style.display = "";
+  generateBtn.disabled = true;
+  ["dlAnimPack", "dlAnimHdr"].forEach((id) => {
+    const b = document.getElementById(id);
+    if (b) b.disabled = true;
+  });
 }
-
-document.getElementById('clearBaseBtn').addEventListener('click', clearBase);
-
+document.getElementById("clearBaseBtn").addEventListener("click", clearBase);
 function clearEnv() {
-    envState = null;
-    sourceVer++;
-    engine.send({ type: 'setEnv', faces: null });
-    setEnvUI(false);
+  envState = null;
+  sourceVer++;
+  engine.send({ type: "setEnv", faces: null });
+  setEnvUI(false);
 }
-
 async function loadEnvVtf(file) {
-    const seq = ++baseSeq;
-    let info;
-    try {
-        info = parseVTFCubemap(await file.arrayBuffer());
-    } catch (err) {
-        console.error(err);
-        alert('Cannot load VTF: ' + (err && err.message ? err.message : err));
-        return;
-    }
-    if (seq !== baseSeq) return;
-
-    closeBmp(baseBmp);
-    baseBmp = null;
-    baseSlot.clear();
-    envState = { size: info.size, raw: info.faces };
-
-    const cv = document.createElement('canvas');
-    cv.width = cv.height = info.size;
-    cv.getContext('2d').putImageData(new ImageData(info.faces.pz, info.size, info.size), 0, 0);
-    baseSlot.setPreview(cv, null);
-
-    baseName.textContent = file.name;
-    baseDims.textContent = `VTF cubemap ${info.size} × ${info.size} · ${VTF_FMT_NAMES[info.fmt] || info.fmt}` +
-        (info.frames > 1 ? ` · ${info.frames} frames (using frame 1)` : '') +
-        (info.hdr ? ' · HDR clamped to 0..1' : '');
-    baseInfo.hidden = false;
-    setEnvUI(true);
-
-    const radio = document.getElementById('size-' + info.size);
-    if (radio) radio.checked = true;
-
-    applyEnv(false);
+  const seq = ++baseSeq;
+  let info;
+  try {
+    info = parseVTFCubemap(await file.arrayBuffer());
+  } catch (err) {
+    console.error(err);
+    alert("Cannot load VTF: " + (err && err.message ? err.message : err));
+    return;
+  }
+  if (seq !== baseSeq) return;
+  closeBmp(baseBmp);
+  baseBmp = null;
+  baseSlot.clear();
+  envState = { size: info.size, raw: info.faces };
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = info.size;
+  cv.getContext("2d").putImageData(new ImageData(info.faces.pz, info.size, info.size), 0, 0);
+  baseSlot.setPreview(cv, null);
+  baseName.textContent = file.name;
+  baseDims.textContent =
+    `VTF cubemap ${info.size} × ${info.size} · ${VTF_FMT_NAMES[info.fmt] || info.fmt}` +
+    (info.frames > 1 ? ` · ${info.frames} frames (using frame 1)` : "") +
+    (info.hdr ? " · HDR clamped to 0..1" : "");
+  baseInfo.hidden = false;
+  setEnvUI(true);
+  const radio = document.getElementById("size-" + info.size);
+  if (radio) radio.checked = true;
+  applyEnv(false);
 }
-
-// Inverse of the export orientation (see EXPORT_RX / forExport in makeRotator):
-// export samples direction (x,y,z) -> (x,z,-y), so on import we sample (x,y,z) -> (x,-z,y).
-// This is an exact 90° turn of the cube, i.e. a pure permutation of face pixels.
 const IMPORT_BASIS = {
-    px: [0, 0, -1, 0, 1, 0, 1, 0, 0],
-    nx: [0, 0, 1, 0, 1, 0, -1, 0, 0],
-    py: [1, 0, 0, 0, 0, -1, 0, 1, 0],
-    ny: [1, 0, 0, 0, 0, 1, 0, -1, 0],
-    pz: [1, 0, 0, 0, 1, 0, 0, 0, 1],
-    nz: [-1, 0, 0, 0, 1, 0, 0, 0, -1]
+  px: [0, 0, -1, 0, 1, 0, 1, 0, 0],
+  nx: [0, 0, 1, 0, 1, 0, -1, 0, 0],
+  py: [1, 0, 0, 0, 0, -1, 0, 1, 0],
+  ny: [1, 0, 0, 0, 0, 1, 0, -1, 0],
+  pz: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  nz: [-1, 0, 0, 0, 1, 0, 0, 0, -1],
 };
 const importRemapCache = new Map();
-
 function getImportRemap(size) {
-    let m = importRemapCache.get(size);
-    if (m) return m;
-    m = {};
-    for (const f of FACES) {
-        const bs = IMPORT_BASIS[f];
-        const srcFace = new Uint8Array(size * size);
-        const srcPix = new Uint32Array(size * size);
-        for (let r = 0; r < size; r++) {
-            for (let c = 0; c < size; c++) {
-                const a = -1 + 2 * (c + 0.5) / size, b = 1 - 2 * (r + 0.5) / size;
-                const dx = bs[0] * a + bs[3] * b + bs[6];
-                const dy = bs[1] * a + bs[4] * b + bs[7];
-                const dz = bs[2] * a + bs[5] * b + bs[8];
-                const x = dx, y = -dz, z = dy;
-                const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
-                let fi;
-                if (ax >= ay && ax >= az) fi = x > 0 ? 0 : 1;
-                else if (ay >= az) fi = y > 0 ? 2 : 3;
-                else fi = z > 0 ? 4 : 5;
-                const s = IMPORT_BASIS[FACES[fi]];
-                const dc = x * s[6] + y * s[7] + z * s[8];
-                const u = ((x * s[0] + y * s[1] + z * s[2]) / dc + 1) * 0.5 * size - 0.5;
-                const v = (1 - (x * s[3] + y * s[4] + z * s[5]) / dc) * 0.5 * size - 0.5;
-                const i = r * size + c;
-                srcFace[i] = fi;
-                srcPix[i] = Math.round(v) * size + Math.round(u);
-            }
-        }
-        m[f] = { srcFace, srcPix };
+  let m = importRemapCache.get(size);
+  if (m) return m;
+  m = {};
+  for (const f of FACES) {
+    const bs = IMPORT_BASIS[f];
+    const srcFace = new Uint8Array(size * size);
+    const srcPix = new Uint32Array(size * size);
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        const a = -1 + (2 * (c + 0.5)) / size,
+          b = 1 - (2 * (r + 0.5)) / size;
+        const dx = bs[0] * a + bs[3] * b + bs[6];
+        const dy = bs[1] * a + bs[4] * b + bs[7];
+        const dz = bs[2] * a + bs[5] * b + bs[8];
+        const x2 = dx,
+          y = -dz,
+          z = dy;
+        const ax = Math.abs(x2),
+          ay = Math.abs(y),
+          az = Math.abs(z);
+        let fi;
+        if (ax >= ay && ax >= az) fi = x2 > 0 ? 0 : 1;
+        else if (ay >= az) fi = y > 0 ? 2 : 3;
+        else fi = z > 0 ? 4 : 5;
+        const s = IMPORT_BASIS[FACES[fi]];
+        const dc = x2 * s[6] + y * s[7] + z * s[8];
+        const u = ((x2 * s[0] + y * s[1] + z * s[2]) / dc + 1) * 0.5 * size - 0.5;
+        const v = (1 - (x2 * s[3] + y * s[4] + z * s[5]) / dc) * 0.5 * size - 0.5;
+        const i = r * size + c;
+        srcFace[i] = fi;
+        srcPix[i] = Math.round(v) * size + Math.round(u);
+      }
     }
-    importRemapCache.set(size, m);
-    return m;
+    m[f] = { srcFace, srcPix };
+  }
+  importRemapCache.set(size, m);
+  return m;
 }
-
 function rotateFacesForImport(src, size) {
-    const map = getImportRemap(size);
-    const out = {};
-    for (const f of FACES) {
-        const { srcFace, srcPix } = map[f];
-        const dst = new Uint8ClampedArray(size * size * 4);
-        for (let i = 0; i < size * size; i++) {
-            const sp = src[FACES[srcFace[i]]];
-            const so = srcPix[i] * 4, d = i * 4;
-            dst[d] = sp[so]; dst[d + 1] = sp[so + 1]; dst[d + 2] = sp[so + 2]; dst[d + 3] = sp[so + 3];
-        }
-        out[f] = dst;
+  const map = getImportRemap(size);
+  const out = {};
+  for (const f of FACES) {
+    const { srcFace, srcPix } = map[f];
+    const dst = new Uint8ClampedArray(size * size * 4);
+    for (let i = 0; i < size * size; i++) {
+      const sp = src[FACES[srcFace[i]]];
+      const so = srcPix[i] * 4,
+        d = i * 4;
+      dst[d] = sp[so];
+      dst[d + 1] = sp[so + 1];
+      dst[d + 2] = sp[so + 2];
+      dst[d + 3] = sp[so + 3];
     }
-    return out;
+    out[f] = dst;
+  }
+  return out;
 }
-
 function applyEnv(draft) {
-    if (!envState) return;
-    sourceVer++;
-    const size = envState.size, flip = getFlipRows();
-    const flipped = {};
-    for (const f of FACES) {
-        flipped[f] = flip ? flipFaceRows(envState.raw[f], size) : envState.raw[f];
-    }
-    // undo the export orientation so a re-export round-trips to the same file
-    const faces = rotateFacesForImport(flipped, size), transfer = [];
-    for (const f of FACES) transfer.push(faces[f].buffer);
-    engine.send({ type: 'setEnv', faces, size }, transfer);
-
-    srcW = srcH = size;
-    baseReady = true;
-    generateBtn.disabled = false;
-    ['dlAnimPack', 'dlAnimHdr'].forEach(id => {
-        const b = document.getElementById(id);
-        if (b) b.disabled = false;
-    });
-    triggerRender(draft);
+  if (!envState) return;
+  sourceVer++;
+  const size = envState.size,
+    flip = getFlipRows();
+  const flipped = {};
+  for (const f of FACES) {
+    flipped[f] = flip ? flipFaceRows(envState.raw[f], size) : envState.raw[f];
+  }
+  const faces = rotateFacesForImport(flipped, size),
+    transfer = [];
+  for (const f of FACES) transfer.push(faces[f].buffer);
+  engine.send({ type: "setEnv", faces, size }, transfer);
+  srcW = srcH = size;
+  baseReady = true;
+  generateBtn.disabled = false;
+  ["dlAnimPack", "dlAnimHdr"].forEach((id) => {
+    const b = document.getElementById(id);
+    if (b) b.disabled = false;
+  });
+  triggerRender(draft);
 }
-
-document.querySelectorAll('input[name="flipRows"]').forEach(input => {
-    input.addEventListener('change', () => { if (envState) applyEnv(false); });
+document.querySelectorAll('input[name="flipRows"]').forEach((input) => {
+  input.addEventListener("change", () => {
+    if (envState) applyEnv(false);
+  });
 });
-
 function getSpherePixels(size) {
-    if (!baseBmp) return null;
-    const cv = normalizeMatcap(baseBmp, baseFit.fit, size);
-    return cv.getContext('2d').getImageData(0, 0, size, size).data;
+  if (!baseBmp) return null;
+  const cv = normalizeMatcap(baseBmp, baseFit.fit, size);
+  return cv.getContext("2d").getImageData(0, 0, size, size).data;
 }
-
 function crc32(buf) {
-    let c, table = crc32.table || (crc32.table = (() => {
+  let c,
+    table =
+      crc32.table ||
+      (crc32.table = (() => {
         const t = [];
         for (let n = 0; n < 256; n++) {
-            c = n;
-            for (let k = 0; k < 8; k++) c = c & 1 ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-            t[n] = c;
+          c = n;
+          for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ (c >>> 1) : c >>> 1;
+          t[n] = c;
         }
         return t;
-    })());
-    let crc = 0xFFFFFFFF;
-    for (let i = 0; i < buf.length; i++) crc = table[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
-    return (crc ^ 0xFFFFFFFF) >>> 0;
+      })());
+  let crc = 4294967295;
+  for (let i = 0; i < buf.length; i++) crc = table[(crc ^ buf[i]) & 255] ^ (crc >>> 8);
+  return (crc ^ 4294967295) >>> 0;
 }
-
 function buildZip(files) {
-    const localParts = [], centralParts = [];
-    let offset = 0;
-    const encoder = new TextEncoder();
-    for (const file of files) {
-        const nameBytes = encoder.encode(file.name);
-        const crc = crc32(file.data);
-        const size = file.data.length;
-
-        const local = new DataView(new ArrayBuffer(30));
-        local.setUint32(0, 0x04034b50, true);
-        local.setUint16(4, 20, true);
-        local.setUint16(6, 0, true);
-        local.setUint16(8, 0, true);
-        local.setUint16(10, 0, true);
-        local.setUint16(12, 0, true);
-        local.setUint32(14, crc, true);
-        local.setUint32(18, size, true);
-        local.setUint32(22, size, true);
-        local.setUint16(26, nameBytes.length, true);
-        local.setUint16(28, 0, true);
-        localParts.push(new Uint8Array(local.buffer), nameBytes, file.data);
-
-        const central = new DataView(new ArrayBuffer(46));
-        central.setUint32(0, 0x02014b50, true);
-        central.setUint16(4, 20, true);
-        central.setUint16(6, 20, true);
-        central.setUint16(8, 0, true);
-        central.setUint16(10, 0, true);
-        central.setUint16(12, 0, true);
-        central.setUint16(14, 0, true);
-        central.setUint32(16, crc, true);
-        central.setUint32(20, size, true);
-        central.setUint32(24, size, true);
-        central.setUint16(28, nameBytes.length, true);
-        central.setUint16(30, 0, true);
-        central.setUint16(32, 0, true);
-        central.setUint16(34, 0, true);
-        central.setUint16(36, 0, true);
-        central.setUint32(38, 0, true);
-        central.setUint32(42, offset, true);
-        centralParts.push(new Uint8Array(central.buffer), nameBytes);
-
-        offset += local.byteLength + nameBytes.length + size;
-    }
-    const centralStart = offset;
-    let centralSize = 0;
-    for (const p of centralParts) centralSize += p.length;
-
-    const end = new DataView(new ArrayBuffer(22));
-    end.setUint32(0, 0x06054b50, true);
-    end.setUint16(4, 0, true);
-    end.setUint16(6, 0, true);
-    end.setUint16(8, files.length, true);
-    end.setUint16(10, files.length, true);
-    end.setUint32(12, centralSize, true);
-    end.setUint32(16, centralStart, true);
-    end.setUint16(20, 0, true);
-
-    const all = [...localParts, ...centralParts, new Uint8Array(end.buffer)];
-    let total = 0;
-    for (const p of all) total += p.length;
-    const out = new Uint8Array(total);
-    let p = 0;
-    for (const part of all) { out.set(part, p); p += part.length; }
-    return out;
+  const localParts = [],
+    centralParts = [];
+  let offset = 0;
+  const encoder = new TextEncoder();
+  for (const file of files) {
+    const nameBytes = encoder.encode(file.name);
+    const crc = crc32(file.data);
+    const size = file.data.length;
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 67324752, true);
+    local.setUint16(4, 20, true);
+    local.setUint16(6, 0, true);
+    local.setUint16(8, 0, true);
+    local.setUint16(10, 0, true);
+    local.setUint16(12, 0, true);
+    local.setUint32(14, crc, true);
+    local.setUint32(18, size, true);
+    local.setUint32(22, size, true);
+    local.setUint16(26, nameBytes.length, true);
+    local.setUint16(28, 0, true);
+    localParts.push(new Uint8Array(local.buffer), nameBytes, file.data);
+    const central = new DataView(new ArrayBuffer(46));
+    central.setUint32(0, 33639248, true);
+    central.setUint16(4, 20, true);
+    central.setUint16(6, 20, true);
+    central.setUint16(8, 0, true);
+    central.setUint16(10, 0, true);
+    central.setUint16(12, 0, true);
+    central.setUint16(14, 0, true);
+    central.setUint32(16, crc, true);
+    central.setUint32(20, size, true);
+    central.setUint32(24, size, true);
+    central.setUint16(28, nameBytes.length, true);
+    central.setUint16(30, 0, true);
+    central.setUint16(32, 0, true);
+    central.setUint16(34, 0, true);
+    central.setUint16(36, 0, true);
+    central.setUint32(38, 0, true);
+    central.setUint32(42, offset, true);
+    centralParts.push(new Uint8Array(central.buffer), nameBytes);
+    offset += local.byteLength + nameBytes.length + size;
+  }
+  const centralStart = offset;
+  let centralSize = 0;
+  for (const p2 of centralParts) centralSize += p2.length;
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 101010256, true);
+  end.setUint16(4, 0, true);
+  end.setUint16(6, 0, true);
+  end.setUint16(8, files.length, true);
+  end.setUint16(10, files.length, true);
+  end.setUint32(12, centralSize, true);
+  end.setUint32(16, centralStart, true);
+  end.setUint16(20, 0, true);
+  const all = [...localParts, ...centralParts, new Uint8Array(end.buffer)];
+  let total = 0;
+  for (const p2 of all) total += p2.length;
+  const out = new Uint8Array(total);
+  let p = 0;
+  for (const part of all) {
+    out.set(part, p);
+    p += part.length;
+  }
+  return out;
 }
-
 function download(data, filename, mime) {
-    const blob = new Blob([data], { type: mime });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+  const blob = new Blob([data], { type: mime });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
-
 let exportRendered = false;
-
 async function getFacesAt(size) {
-    exportRendered = true;
-    const res = await renderFrameAsync(size, collectParams(true));
-    const sp = getSpherePixels(size);
-    if (sp) res.faces.sphere = sp;
-    return res.faces;
+  exportRendered = true;
+  const res = await renderFrameAsync(size, collectParams(true));
+  const sp = getSpherePixels(size);
+  if (sp) res.faces.sphere = sp;
+  return res.faces;
 }
-
 function setupExport(id, run) {
-    const btn = document.getElementById(id);
-    if (!btn) return;
-    btn.addEventListener('click', async () => {
-        if (!generatedFaces || btn.disabled) return;
-        btn.disabled = true;
-        try {
-            await run();
-        } catch (err) {
-            console.error(err);
-        } finally {
-            btn.disabled = false;
-            if (exportRendered) {
-                exportRendered = false;
-                triggerRender(false);
-            }
-        }
-    });
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    if (!generatedFaces || btn.disabled) return;
+    btn.disabled = true;
+    try {
+      await run();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      btn.disabled = false;
+      if (exportRendered) {
+        exportRendered = false;
+        triggerRender(false);
+      }
+    }
+  });
 }
-
-const fileBase = () => getMatPath().split('/').pop();
-
-setupExport('dlVtf', async () => {
-    const size = getFaceSize();
-    const faces = await getFacesAt(size);
-    download(buildVTF(faces, size, getFlipRows(), getPixelFormat()), fileBase() + '_env.vtf', 'application/octet-stream');
+const fileBase = () => getMatPath().split("/").pop();
+setupExport("dlVtf", async () => {
+  const size = getFaceSize();
+  const faces = await getFacesAt(size);
+  download(
+    buildVTF(faces, size, getFlipRows(), getPixelFormat()),
+    fileBase() + "_env.vtf",
+    "application/octet-stream",
+  );
 });
-
-setupExport('dlVtfHdr', async () => {
-    const size = getHdrFaceSize();
-    const faces = await getFacesAt(size);
-    download(buildVTFHDR(faces, size, getFlipRows()), fileBase() + '_env.hdr.vtf', 'application/octet-stream');
+setupExport("dlVtfHdr", async () => {
+  const size = getHdrFaceSize();
+  const faces = await getFacesAt(size);
+  download(buildVTFHDR(faces, size, getFlipRows()), fileBase() + "_env.hdr.vtf", "application/octet-stream");
 });
-
-setupExport('dlPngZip', async () => {
-    const size = getFaceSize();
-    const faces = await getFacesAt(size);
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    const files = FACES.map(face => {
-        ctx.putImageData(new ImageData(faces[face], size, size), 0, 0);
-        return { name: `matcap_${face}.png`, data: canvasPngBytes(canvas) };
-    });
-    const mcCanvas = document.querySelector('.face-cell[data-face="matcap"] canvas');
-    if (mcCanvas) files.push({ name: 'matcap_original.png', data: canvasPngBytes(mcCanvas) });
-    download(buildZip(files), fileBase() + '_faces.zip', 'application/zip');
+setupExport("dlPngZip", async () => {
+  const size = getFaceSize();
+  const faces = await getFacesAt(size);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const files = FACES.map((face) => {
+    ctx.putImageData(new ImageData(faces[face], size, size), 0, 0);
+    return { name: `matcap_${face}.png`, data: canvasPngBytes(canvas) };
+  });
+  const mcCanvas = document.querySelector('.face-cell[data-face="matcap"] canvas');
+  if (mcCanvas) files.push({ name: "matcap_original.png", data: canvasPngBytes(mcCanvas) });
+  download(buildZip(files), fileBase() + "_faces.zip", "application/zip");
 });
-
 function buildVTFAnimated(frameFaces, size, flipRows, format) {
-    const minSize = format === 'DXT1' ? 4 : 1;
-    const frameCount = frameFaces.length;
-    const chains = frameFaces.map(f => buildMipChain(f, size, minSize));
-    const mipCount = chains[0].length;
-
-    const headerSize = 64;
-    let bodySize = 0;
-    for (const level of chains[0]) bodySize += faceByteSize(level.size, format) * 7 * frameCount;
-    const buf = new ArrayBuffer(headerSize + bodySize);
-    const dv = new DataView(buf);
-    let o = 0;
-    const wU8 = v => { dv.setUint8(o, v); o += 1; };
-    const wU16 = v => { dv.setUint16(o, v, true); o += 2; };
-    const wU32 = v => { dv.setUint32(o, v, true); o += 4; };
-    const wF32 = v => { dv.setFloat32(o, v, true); o += 4; };
-
-    wU8(0x56); wU8(0x54); wU8(0x46); wU8(0x00);
-    wU32(7); wU32(1);
-    wU32(headerSize);
-    wU16(size); wU16(size);
-    wU32(0x00004000 | 0x00000200);
-    wU16(frameCount); wU16(0);
-    wU32(0);
-    wF32(0.5); wF32(0.5); wF32(0.5);
-    wU32(0);
-    wF32(1.0);
-    wU32(VTF_FORMATS[format]);
-    wU8(mipCount);
-    dv.setInt32(o, -1, true); o += 4;
-    wU8(0); wU8(0);
-    wU8(0);
-
-    const writeFace = (rawRgba, faceSize) => {
-        const src = flipRows ? flipFaceRows(rawRgba, faceSize) : rawRgba;
-        const packed = packFace(src, faceSize, format);
-        const faceBytes = faceByteSize(faceSize, format);
-        new Uint8Array(buf, o, faceBytes).set(packed);
-        o += faceBytes;
-    };
-
-    for (let mip = mipCount - 1; mip >= 0; mip--) {
-        for (let fr = 0; fr < frameCount; fr++) {
-            const level = chains[fr][mip];
-            for (const face of FACES) writeFace(level.faces[face], level.size);
-            writeFace(level.faces.sphere || level.faces[FACES[0]], level.size);
-        }
+  const minSize = format === "DXT1" ? 4 : 1;
+  const frameCount = frameFaces.length;
+  const chains = frameFaces.map((f) => buildMipChain(f, size, minSize));
+  const mipCount = chains[0].length;
+  const headerSize = 64;
+  let bodySize = 0;
+  for (const level of chains[0]) bodySize += faceByteSize(level.size, format) * 7 * frameCount;
+  const buf = new ArrayBuffer(headerSize + bodySize);
+  const dv = new DataView(buf);
+  let o = 0;
+  const wU8 = (v) => {
+    dv.setUint8(o, v);
+    o += 1;
+  };
+  const wU16 = (v) => {
+    dv.setUint16(o, v, true);
+    o += 2;
+  };
+  const wU32 = (v) => {
+    dv.setUint32(o, v, true);
+    o += 4;
+  };
+  const wF32 = (v) => {
+    dv.setFloat32(o, v, true);
+    o += 4;
+  };
+  wU8(86);
+  wU8(84);
+  wU8(70);
+  wU8(0);
+  wU32(7);
+  wU32(1);
+  wU32(headerSize);
+  wU16(size);
+  wU16(size);
+  wU32(16384 | 512);
+  wU16(frameCount);
+  wU16(0);
+  wU32(0);
+  wF32(0.5);
+  wF32(0.5);
+  wF32(0.5);
+  wU32(0);
+  wF32(1);
+  wU32(VTF_FORMATS[format]);
+  wU8(mipCount);
+  dv.setInt32(o, -1, true);
+  o += 4;
+  wU8(0);
+  wU8(0);
+  wU8(0);
+  const writeFace = (rawRgba, faceSize) => {
+    const src = flipRows ? flipFaceRows(rawRgba, faceSize) : rawRgba;
+    const packed = packFace(src, faceSize, format);
+    const faceBytes = faceByteSize(faceSize, format);
+    new Uint8Array(buf, o, faceBytes).set(packed);
+    o += faceBytes;
+  };
+  for (let mip = mipCount - 1; mip >= 0; mip--) {
+    for (let fr = 0; fr < frameCount; fr++) {
+      const level = chains[fr][mip];
+      for (const face of FACES) writeFace(level.faces[face], level.size);
+      writeFace(level.faces.sphere || level.faces[FACES[0]], level.size);
     }
-    return new Uint8Array(buf);
+  }
+  return new Uint8Array(buf);
 }
-
 function prepareFramesForSize(frameFaces, curSize, targetSize) {
-    if (targetSize >= curSize) return { frames: frameFaces, size: curSize };
-    const times = Math.round(Math.log2(curSize / targetSize));
-    if (times <= 0) return { frames: frameFaces, size: curSize };
-    let finalSize = targetSize;
-    const scaledFrames = frameFaces.map(f => {
-        const outFaces = {};
-        for (const face of FACES) {
-            const r = downsampleFaceN(f[face], curSize, times);
-            outFaces[face] = r.faces;
-            finalSize = r.size;
-        }
-        if (f.sphere) {
-            outFaces.sphere = downsampleFaceN(f.sphere, curSize, times).faces;
-        }
-        return outFaces;
-    });
-    return { frames: scaledFrames, size: finalSize };
+  if (targetSize >= curSize) return { frames: frameFaces, size: curSize };
+  const times = Math.round(Math.log2(curSize / targetSize));
+  if (times <= 0) return { frames: frameFaces, size: curSize };
+  let finalSize = targetSize;
+  const scaledFrames = frameFaces.map((f) => {
+    const outFaces = {};
+    for (const face of FACES) {
+      const r = downsampleFaceN(f[face], curSize, times);
+      outFaces[face] = r.faces;
+      finalSize = r.size;
+    }
+    if (f.sphere) {
+      outFaces.sphere = downsampleFaceN(f.sphere, curSize, times).faces;
+    }
+    return outFaces;
+  });
+  return { frames: scaledFrames, size: finalSize };
 }
-
 function renderFrameAsync(size, p) {
-    return new Promise((resolve, reject) => {
-        const seq = ++renderSeq;
-        framePending.set(seq, { resolve, reject });
-        engine.send({ type: 'render', seq, size, final: true, p });
-        setTimeout(() => {
-            if (framePending.delete(seq)) reject(new Error('Frame render timed out'));
-        }, 60000);
-    });
+  return new Promise((resolve, reject) => {
+    const seq = ++renderSeq;
+    framePending.set(seq, { resolve, reject });
+    engine.send({ type: "render", seq, size, final: true, p });
+    setTimeout(() => {
+      if (framePending.delete(seq)) reject(new Error("Frame render timed out"));
+    }, 60000);
+  });
 }
-
-// Full example VMT written next to the animated envmap (layout follows default.vmt / default_360.vmt).
 function animVmt(envPath, frames, grid, axis) {
-    const kv = (k, v, c) => `            ${('"' + k + '"').padEnd(14)}${('"' + v + '"').padEnd(8)}// ${c}`;
-    const proxy = grid ? 'dih_envmapcameraspace_360' : 'dih_envmapcameraspace_' + axis;
-    const lines = grid
-        ? [
-            kv('offset', '0', 'yaw offset, deg'),
-            kv('frames', frames, 'yaw frames'),
-            kv('pitchframes', grid.pitchN, 'pitch frames'),
-            kv('pitchmax', grid.pitchMax, 'pitch range +-deg')
-        ]
-        : [
-            kv('offset', '0', 'yaw offset, deg'),
-            kv('frames', frames, 'yaw frames')
-        ];
-    lines.push(kv('usepos', '1', '1 = use direction eye -> entity, 0 = camera angles'));
-    return [
-        'VertexLitGeneric',
-        '{',
-        '    $basetexture "color/black"',
-        '',
-        '    $phong 0',
-        '',
-        '    $rimlight 0',
-        '',
-        `    $envmap "${envPath.replace(/\//g, '\\')}"`,
-        '',
-        '    $envmaptint "[1 1 1]"',
-        '',
-        '    Proxies',
-        '    {',
-        `        ${proxy}`,
-        '        {',
-        ...lines,
-        '        }',
-        '    }',
-        '}'
-    ].join('\r\n');
+  const kv = (k, v, c) => `            ${('"' + k + '"').padEnd(14)}${('"' + v + '"').padEnd(8)}// ${c}`;
+  const proxy = grid ? "dih_envmapcameraspace_360" : "dih_envmapcameraspace_" + axis;
+  const lines = grid
+    ? [
+        kv("offset", "0", "yaw offset, deg"),
+        kv("frames", frames, "yaw frames"),
+        kv("pitchframes", grid.pitchN, "pitch frames"),
+        kv("pitchmax", grid.pitchMax, "pitch range +-deg"),
+      ]
+    : [kv("offset", "0", "yaw offset, deg"), kv("frames", frames, "yaw frames")];
+  lines.push(kv("usepos", "1", "1 = use direction eye -> entity, 0 = camera angles"));
+  return [
+    "VertexLitGeneric",
+    "{",
+    '    $basetexture "color/black"',
+    "",
+    "    $phong 0",
+    "",
+    "    $rimlight 0",
+    "",
+    `    $envmap "${envPath.replace(/\//g, "\\")}"`,
+    "",
+    '    $envmaptint "[1 1 1]"',
+    "",
+    "    Proxies",
+    "    {",
+    `        ${proxy}`,
+    "        {",
+    ...lines,
+    "        }",
+    "    }",
+    "}",
+  ].join("\r\n");
 }
-
 (function setupAnimPack() {
-    const btnPack = document.getElementById('dlAnimPack');
-    const btnHdr = document.getElementById('dlAnimHdr');
-    const framesInput = document.getElementById('animFrames');
-    const reverse = document.getElementById('animReverse');
-    const includeHdrCheckbox = document.getElementById('animIncludeHdr');
-    const includeExamplesCheckbox = document.getElementById('animIncludeExamples');
-    const framesVal = document.getElementById('animFramesVal');
-    const status = document.getElementById('animStatus');
-    const stepLabel = document.getElementById('animStep');
-    if (!btnPack || !framesInput) return;
-
-    let animCache = null;
-
-    const FRAME_STEPS = [4, 5, 6, 8, 9, 10, 12, 15, 18, 20, 24, 30, 36, 40, 45, 60, 72, 90, 120, 180, 360];
-    const readFrames = () => FRAME_STEPS[Math.max(0, Math.min(FRAME_STEPS.length - 1, parseInt(framesInput.value, 10) || 0))];
-    const gridCfg = () => ({
-        pitchN: Math.max(1, Math.min(45, parseInt(document.getElementById('animPitchFrames')?.value, 10) || 1)),
-        pitchMax: Math.max(1, Math.min(89, parseFloat(document.getElementById('animPitchMax')?.value) || 60)),
-        invert: !!document.getElementById('animPitchInvert')?.checked
+  const btnPack = document.getElementById("dlAnimPack");
+  const btnHdr = document.getElementById("dlAnimHdr");
+  const framesInput = document.getElementById("animFrames");
+  const reverse = document.getElementById("animReverse");
+  const includeHdrCheckbox = document.getElementById("animIncludeHdr");
+  const includeExamplesCheckbox = document.getElementById("animIncludeExamples");
+  const framesVal = document.getElementById("animFramesVal");
+  const status = document.getElementById("animStatus");
+  const stepLabel = document.getElementById("animStep");
+  if (!btnPack || !framesInput) return;
+  let animCache = null;
+  const FRAME_STEPS = [4, 5, 6, 8, 9, 10, 12, 15, 18, 20, 24, 30, 36, 40, 45, 60, 72, 90, 120, 180, 360];
+  const readFrames = () =>
+    FRAME_STEPS[Math.max(0, Math.min(FRAME_STEPS.length - 1, parseInt(framesInput.value, 10) || 0))];
+  const gridCfg = () => ({
+    pitchN: Math.max(1, Math.min(45, parseInt(document.getElementById("animPitchFrames")?.value, 10) || 1)),
+    pitchMax: Math.max(1, Math.min(89, parseFloat(document.getElementById("animPitchMax")?.value) || 60)),
+    invert: !!document.getElementById("animPitchInvert")?.checked,
+  });
+  const totalFrames = () => {
+    const N = readFrames();
+    return getAnimAxis() === "grid" ? N * gridCfg().pitchN : N;
+  };
+  const getAnimAxis = () => {
+    const checked = document.querySelector('input[name="animAxis"]:checked');
+    return checked ? checked.value : "y";
+  };
+  const updateStep = () => {
+    const Nyaw = readFrames();
+    const N = totalFrames();
+    const perFrame = (size) => (faceByteSize(size, "RGBA16161616F") * 7 * 4) / 3;
+    const ldrSize = Math.min(getFaceSize(), 256);
+    const hdrSize = Math.min(getHdrFaceSize(), 256);
+    let bytes = (N * faceByteSize(ldrSize, getPixelFormat()) * 7 * 4) / 3;
+    if (!includeHdrCheckbox || includeHdrCheckbox.checked) bytes += N * perFrame(hdrSize);
+    framesVal.textContent = Nyaw;
+    const stepTxt = `${(360 / Nyaw).toFixed(1).replace(/\.0$/, "")}°/frame`;
+    stepLabel.textContent =
+      (getAnimAxis() === "grid" ? `${stepTxt}, ${N} total, ` : `${stepTxt}, `) +
+      `~${(bytes / 1048576).toFixed(1)} MB`;
+  };
+  framesInput.addEventListener("input", updateStep);
+  document
+    .querySelectorAll(
+      'input[name="faceSize"], input[name="hdrFaceSize"], input[name="pixelFormat"], #animIncludeHdr',
+    )
+    .forEach((el) => el.addEventListener("change", updateStep));
+  updateStep();
+  const gridOpts = document.getElementById("animGridOpts");
+  const refreshGridUi = () => {
+    const g = gridCfg();
+    const set = (id, v) => {
+      const e = document.getElementById(id);
+      if (e) e.textContent = v;
+    };
+    set("animPitchMaxVal", g.pitchMax);
+    set("animPitchFramesVal", g.pitchN);
+    const step = g.pitchN > 1 ? (2 * g.pitchMax) / (g.pitchN - 1) : 0;
+    set("animPitchInfo", `−${g.pitchMax}° … +${g.pitchMax}°, step ${step.toFixed(1).replace(/\.0$/, "")}°`);
+    if (gridOpts) gridOpts.style.display = getAnimAxis() === "grid" ? "" : "none";
+  };
+  document.querySelectorAll('input[name="animAxis"]').forEach((r) => {
+    r.addEventListener("change", () => {
+      animCache = null;
+      refreshGridUi();
+      updateStep();
     });
-    const totalFrames = () => {
-        const N = readFrames();
-        return getAnimAxis() === 'grid' ? N * gridCfg().pitchN : N;
-    };
-    const getAnimAxis = () => {
-        const checked = document.querySelector('input[name="animAxis"]:checked');
-        return checked ? checked.value : 'y';
-    };
-
-    const updateStep = () => {
-        const Nyaw = readFrames();
-        const N = totalFrames();
-        const perFrame = size => faceByteSize(size, 'RGBA16161616F') * 7 * 4 / 3;
-        const ldrSize = Math.min(getFaceSize(), 256);
-        const hdrSize = Math.min(getHdrFaceSize(), 256);
-        let bytes = N * faceByteSize(ldrSize, getPixelFormat()) * 7 * 4 / 3;
-        if (!includeHdrCheckbox || includeHdrCheckbox.checked) bytes += N * perFrame(hdrSize);
-        framesVal.textContent = Nyaw;
-        const stepTxt = `${(360 / Nyaw).toFixed(1).replace(/\.0$/, '')}°/frame`;
-        stepLabel.textContent = (getAnimAxis() === 'grid' ? `${stepTxt}, ${N} total, ` : `${stepTxt}, `) + `~${(bytes / 1048576).toFixed(1)} MB`;
-    };
-    framesInput.addEventListener('input', updateStep);
-    document.querySelectorAll('input[name="faceSize"], input[name="hdrFaceSize"], input[name="pixelFormat"], #animIncludeHdr')
-        .forEach(el => el.addEventListener('change', updateStep));
-    updateStep();
-
-    const gridOpts = document.getElementById('animGridOpts');
-    const refreshGridUi = () => {
-        const g = gridCfg();
-        const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
-        set('animPitchMaxVal', g.pitchMax);
-        set('animPitchFramesVal', g.pitchN);
-        const step = g.pitchN > 1 ? (2 * g.pitchMax / (g.pitchN - 1)) : 0;
-        set('animPitchInfo', `−${g.pitchMax}° … +${g.pitchMax}°, step ${step.toFixed(1).replace(/\.0$/, '')}°`);
-        if (gridOpts) gridOpts.style.display = getAnimAxis() === 'grid' ? '' : 'none';
-    };
-    document.querySelectorAll('input[name="animAxis"]').forEach(r => {
-        r.addEventListener('change', () => { animCache = null; refreshGridUi(); updateStep(); });
+  });
+  ["animPitchFrames", "animPitchMax", "animPitchInvert"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el)
+      el.addEventListener("input", () => {
+        animCache = null;
+        refreshGridUi();
+        updateStep();
+      });
+  });
+  refreshGridUi();
+  if (reverse)
+    reverse.addEventListener("change", () => {
+      animCache = null;
     });
-    ['animPitchFrames', 'animPitchMax', 'animPitchInvert'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener('input', () => { animCache = null; refreshGridUi(); updateStep(); });
-    });
-    refreshGridUi();
-    if (reverse) reverse.addEventListener('change', () => { animCache = null; });
-
-    const setBusy = busy => {
-        animBusy = busy;
-        btnPack.disabled = busy || !baseReady;
-        if (btnHdr) btnHdr.disabled = busy || !baseReady;
-    };
-
-    if (baseReady) {
-        btnPack.disabled = false;
-        if (btnHdr) btnHdr.disabled = false;
+  const setBusy = (busy) => {
+    animBusy = busy;
+    btnPack.disabled = busy || !baseReady;
+    if (btnHdr) btnHdr.disabled = busy || !baseReady;
+  };
+  if (baseReady) {
+    btnPack.disabled = false;
+    if (btnHdr) btnHdr.disabled = false;
+  }
+  async function getOrRenderFrames(N, size, axis, dir) {
+    const basePars = collectParams(true);
+    const grid = axis === "grid" ? gridCfg() : null;
+    const cfgKey = `${sourceVer}|${N}|${size}|${axis}|${dir}|${grid ? JSON.stringify(grid) : ""}|${JSON.stringify(basePars)}`;
+    if (animCache && animCache.key === cfgKey) {
+      return animCache.frames;
     }
-
-    async function getOrRenderFrames(N, size, axis, dir) {
-        const basePars = collectParams(true);
-        const grid = axis === 'grid' ? gridCfg() : null;
-        const cfgKey = `${sourceVer}|${N}|${size}|${axis}|${dir}|${grid ? JSON.stringify(grid) : ''}|${JSON.stringify(basePars)}`;
-        if (animCache && animCache.key === cfgKey) {
-            return animCache.frames;
-        }
-
-        const sphere = getSpherePixels(size);
-
-        const frames = [];
-        const pN = grid ? grid.pitchN : 1;
-        const total = N * pN;
-        for (let k = 0; k < total; k++) {
-            status.textContent = `Rendering frame ${k + 1} / ${total}…`;
-            const p = Object.assign({}, basePars);
-            const yi = k % N;
-            const angleOffset = dir * yi * 2 * Math.PI / N;
-            if (grid) {
-                // frame = pitchIdx * N + yawIdx
-                const pj = Math.floor(k / N);
-                const pitchDeg = pN === 1 ? 0 : -grid.pitchMax + pj * (2 * grid.pitchMax) / (pN - 1);
-                // camera yaw/pitch (Source: +pitch = look down); rotator gets the inverse
-                p.gridYaw = angleOffset;
-                p.gridPitch = (grid.invert ? 1 : -1) * pitchDeg * Math.PI / 180;
-            } else {
-                p.animAxis = axis;
-                p.animAngle = angleOffset;
-            }
-
-            const res = await renderFrameAsync(size, p);
-            if (sphere) res.faces.sphere = sphere;
-            frames.push(res.faces);
-        }
-
-        animCache = { key: cfgKey, frames, size };
-        return frames;
+    const sphere = getSpherePixels(size);
+    const frames = [];
+    const pN = grid ? grid.pitchN : 1;
+    const total = N * pN;
+    for (let k = 0; k < total; k++) {
+      status.textContent = `Rendering frame ${k + 1} / ${total}…`;
+      const p = Object.assign({}, basePars);
+      const yi = k % N;
+      const angleOffset = (dir * yi * 2 * Math.PI) / N;
+      if (grid) {
+        const pj = Math.floor(k / N);
+        const pitchDeg = pN === 1 ? 0 : -grid.pitchMax + (pj * (2 * grid.pitchMax)) / (pN - 1);
+        p.gridYaw = angleOffset;
+        p.gridPitch = ((grid.invert ? 1 : -1) * pitchDeg * Math.PI) / 180;
+      } else {
+        p.animAxis = axis;
+        p.animAngle = angleOffset;
+      }
+      const res = await renderFrameAsync(size, p);
+      if (sphere) res.faces.sphere = sphere;
+      frames.push(res.faces);
     }
-
-    btnPack.addEventListener('click', async () => {
-        if (!baseReady || animBusy) return;
-        const N = readFrames();
-        const ldrSize = Math.min(getFaceSize(), 256);
-        const hdrSize = Math.min(getHdrFaceSize(), 256);
-        const renderSize = Math.max(ldrSize, hdrSize);
-
-        const format = getPixelFormat();
-        const flip = getFlipRows();
-        const dir = reverse.checked ? 1 : -1;
-        const axis = getAnimAxis();
-        const includeHdr = includeHdrCheckbox ? includeHdrCheckbox.checked : true;
-
-        setBusy(true);
-        clearTimeout(renderTimer);
-        try {
-            const rawFrames = await getOrRenderFrames(N, renderSize, axis, dir);
-
-            status.textContent = 'Packing VTF…';
-            await new Promise(r => setTimeout(r, 0));
-            const { frames: ldrFrames } = prepareFramesForSize(rawFrames, renderSize, ldrSize);
-            const vtf = buildVTFAnimated(ldrFrames, ldrSize, flip, format);
-
-            const matPath = getMatPath();
-            const last = matPath.split(/[\\/]/).pop();
-            const tag = axis === 'grid' ? '_360' : '';
-            const vtfName = last + tag + '_envanim.vtf';
-            const files = [{ name: vtfName, data: vtf }];
-            if (!includeExamplesCheckbox || includeExamplesCheckbox.checked) {
-                const vmt = animVmt(matPath + tag + '_envanim', N, axis === 'grid' ? { pitchN: gridCfg().pitchN, pitchMax: gridCfg().pitchMax } : null, axis);
-                files.push({ name: last + tag + '.vmt', data: new TextEncoder().encode(vmt) });
-            }
-
-            let hdrInfo = '';
-            if (includeHdr) {
-                status.textContent = 'Packing HDR VTF…';
-                await new Promise(r => setTimeout(r, 0));
-                const { frames: hdrFrames } = prepareFramesForSize(rawFrames, renderSize, hdrSize);
-                const vtfHdr = buildVTFAnimated(hdrFrames, hdrSize, flip, 'RGBA16161616F');
-                files.push({ name: last + tag + '_envanim.hdr.vtf', data: vtfHdr });
-                hdrInfo = ` + HDR (${hdrSize}px, ${(vtfHdr.length / 1048576).toFixed(2)} MB)`;
-            }
-
-            status.textContent = 'Zipping files…';
-            await new Promise(r => setTimeout(r, 0));
-            download(buildZip(files), last + tag + '_envanim_pack.zip', 'application/zip');
-            status.textContent = `Done: ${ldrFrames.length} frames (${axis.toUpperCase()}), LDR (${ldrSize}px, ${(vtf.length / 1048576).toFixed(2)} MB)${hdrInfo}`;
-        } catch (err) {
-            console.error(err);
-            status.textContent = 'Failed: ' + (err && err.message ? err.message : err);
-        } finally {
-            setBusy(false);
-            triggerRender(false);
-        }
+    animCache = { key: cfgKey, frames, size };
+    return frames;
+  }
+  btnPack.addEventListener("click", async () => {
+    if (!baseReady || animBusy) return;
+    const N = readFrames();
+    const ldrSize = Math.min(getFaceSize(), 256);
+    const hdrSize = Math.min(getHdrFaceSize(), 256);
+    const renderSize = Math.max(ldrSize, hdrSize);
+    const format = getPixelFormat();
+    const flip = getFlipRows();
+    const dir = reverse.checked ? 1 : -1;
+    const axis = getAnimAxis();
+    const includeHdr = includeHdrCheckbox ? includeHdrCheckbox.checked : true;
+    setBusy(true);
+    clearTimeout(renderTimer);
+    try {
+      const rawFrames = await getOrRenderFrames(N, renderSize, axis, dir);
+      status.textContent = "Packing VTF…";
+      await new Promise((r) => setTimeout(r, 0));
+      const { frames: ldrFrames } = prepareFramesForSize(rawFrames, renderSize, ldrSize);
+      const vtf = buildVTFAnimated(ldrFrames, ldrSize, flip, format);
+      const matPath = getMatPath();
+      const last = matPath.split(/[\\/]/).pop();
+      const tag = axis === "grid" ? "_360" : "";
+      const vtfName = last + tag + "_envanim.vtf";
+      const files = [{ name: vtfName, data: vtf }];
+      if (!includeExamplesCheckbox || includeExamplesCheckbox.checked) {
+        const vmt = animVmt(
+          matPath + tag + "_envanim",
+          N,
+          axis === "grid" ? { pitchN: gridCfg().pitchN, pitchMax: gridCfg().pitchMax } : null,
+          axis,
+        );
+        files.push({ name: last + tag + ".vmt", data: new TextEncoder().encode(vmt) });
+      }
+      let hdrInfo = "";
+      if (includeHdr) {
+        status.textContent = "Packing HDR VTF…";
+        await new Promise((r) => setTimeout(r, 0));
+        const { frames: hdrFrames } = prepareFramesForSize(rawFrames, renderSize, hdrSize);
+        const vtfHdr = buildVTFAnimated(hdrFrames, hdrSize, flip, "RGBA16161616F");
+        files.push({ name: last + tag + "_envanim.hdr.vtf", data: vtfHdr });
+        hdrInfo = ` + HDR (${hdrSize}px, ${(vtfHdr.length / 1048576).toFixed(2)} MB)`;
+      }
+      status.textContent = "Zipping files…";
+      await new Promise((r) => setTimeout(r, 0));
+      download(buildZip(files), last + tag + "_envanim_pack.zip", "application/zip");
+      status.textContent = `Done: ${ldrFrames.length} frames (${axis.toUpperCase()}), LDR (${ldrSize}px, ${(vtf.length / 1048576).toFixed(2)} MB)${hdrInfo}`;
+    } catch (err) {
+      console.error(err);
+      status.textContent = "Failed: " + (err && err.message ? err.message : err);
+    } finally {
+      setBusy(false);
+      triggerRender(false);
+    }
+  });
+  if (btnHdr) {
+    btnHdr.addEventListener("click", async () => {
+      if (!baseReady || animBusy) return;
+      const N = readFrames();
+      const hdrSize = Math.min(getHdrFaceSize(), 256);
+      const flip = getFlipRows();
+      const dir = reverse.checked ? 1 : -1;
+      const axis = getAnimAxis();
+      setBusy(true);
+      clearTimeout(renderTimer);
+      try {
+        const rawFrames = await getOrRenderFrames(N, hdrSize, axis, dir);
+        status.textContent = "Packing HDR VTF…";
+        await new Promise((r) => setTimeout(r, 0));
+        const vtfHdr = buildVTFAnimated(rawFrames, hdrSize, flip, "RGBA16161616F");
+        const matPath = getMatPath();
+        const last = matPath.split(/[\\/]/).pop();
+        download(
+          vtfHdr,
+          last + (axis === "grid" ? "_360" : "") + "_envanim.hdr.vtf",
+          "application/octet-stream",
+        );
+        status.textContent = `Done: HDR downloaded (${rawFrames.length} frames, ${hdrSize}px, ${(vtfHdr.length / 1048576).toFixed(2)} MB)`;
+      } catch (err) {
+        console.error(err);
+        status.textContent = "Failed: " + (err && err.message ? err.message : err);
+      } finally {
+        setBusy(false);
+        triggerRender(false);
+      }
     });
-
-    if (btnHdr) {
-        btnHdr.addEventListener('click', async () => {
-            if (!baseReady || animBusy) return;
-            const N = readFrames();
-            const hdrSize = Math.min(getHdrFaceSize(), 256);
-            const flip = getFlipRows();
-            const dir = reverse.checked ? 1 : -1;
-            const axis = getAnimAxis();
-
-            setBusy(true);
-            clearTimeout(renderTimer);
-            try {
-                const rawFrames = await getOrRenderFrames(N, hdrSize, axis, dir);
-
-                status.textContent = 'Packing HDR VTF…';
-                await new Promise(r => setTimeout(r, 0));
-                const vtfHdr = buildVTFAnimated(rawFrames, hdrSize, flip, 'RGBA16161616F');
-
-                const matPath = getMatPath();
-                const last = matPath.split(/[\\/]/).pop();
-                download(vtfHdr, last + (axis === 'grid' ? '_360' : '') + '_envanim.hdr.vtf', 'application/octet-stream');
-                status.textContent = `Done: HDR downloaded (${rawFrames.length} frames, ${hdrSize}px, ${(vtfHdr.length / 1048576).toFixed(2)} MB)`;
-            } catch (err) {
-                console.error(err);
-                status.textContent = 'Failed: ' + (err && err.message ? err.message : err);
-            } finally {
-                setBusy(false);
-                triggerRender(false);
-            }
-        });
-    }
+  }
 })();
