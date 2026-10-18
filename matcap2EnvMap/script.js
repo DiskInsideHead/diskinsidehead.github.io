@@ -785,7 +785,7 @@ function detectDisc(bmp) {
     for (let y = 0; y < h; y++)
       if (rowCnt[y] >= 2) {
         if (y0 < 0) y0 = y;
-        y1 = x;
+        y1 = y;
       }
     if (x0 < 0 || y0 < 0) break;
     const bw = x1 - x0 + 1,
